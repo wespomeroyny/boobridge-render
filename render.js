@@ -4,7 +4,9 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.5.0";
+  var VERSION = "0.6.0";
+  var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
+  var THEMES = {}, WAIT = [];
   var THREE_URL = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
   var TEX = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/";
 
@@ -51,6 +53,9 @@
     ".bb-orb{width:18px;height:18px;border-radius:50%;flex:none;background:radial-gradient(circle at 32% 28%,#b9f0c9,#2f9e5b 55%,#1c6b3c);box-shadow:0 1px 2px rgba(0,0,0,.35),inset 0 -2px 3px rgba(0,0,0,.25)}",
     ".bb-orb.warn{background:radial-gradient(circle at 32% 28%,#ffe2ad,#e0932a 55%,#9a5f10)}.bb-orb.bad{background:radial-gradient(circle at 32% 28%,#ffc4c0,#d8463f 55%,#8e2420)}",
     ".bb-desk{padding:20px 18px 30px;border-radius:14px;background:linear-gradient(160deg,rgba(120,120,110,.16),rgba(120,120,110,.05))}",
+    ".bb[data-bb-theme] .bb-desk{background:var(--bb-desk,none) 0 0/256px,linear-gradient(160deg,rgba(120,120,110,.16),rgba(120,120,110,.05));box-shadow:inset 0 2px 6px rgba(0,0,0,.28),inset 0 0 0 1px rgba(0,0,0,.12)}",
+    ".bb[data-bb-theme] .bb-stage{background:linear-gradient(180deg,rgba(27,36,48,.86),rgba(14,20,28,.93)),var(--bb-stage,none) 0 0/256px,#0e141c}",
+    ".bb[data-bb-theme] .bb-slip{background:linear-gradient(color-mix(in srgb,var(--surface-1) 80%,transparent),color-mix(in srgb,var(--surface-1) 80%,transparent)),var(--bb-slip,none) 0 0/256px,var(--surface-1)}",
     ".bb-sheet{position:relative;max-width:520px;margin:0 auto;padding:22px 22px 20px;border-radius:3px;background:#fbfaf6;color:#22211e;transform:rotate(-.4deg);box-shadow:0 1px 1px rgba(0,0,0,.16),0 6px 8px -5px rgba(0,0,0,.22),0 18px 16px -14px rgba(0,0,0,.36)}",
     ".bb-sheet:before{content:'';position:absolute;inset:0;border-radius:3px;background:var(--bbg);opacity:.22;mix-blend-mode:multiply;pointer-events:none}",
     ".bb-sheet:after{content:'';position:absolute;inset:0;border-radius:3px;background:linear-gradient(115deg,rgba(255,255,255,.55),rgba(255,255,255,0) 38%,rgba(0,0,0,.05));pointer-events:none}",
@@ -423,6 +428,21 @@
     return f && LAYOUTS[f] ? f : "note";
   }
 
+  // Themes: optional textures for the surfaces under the content. Loaded once, only when a payload asks.
+  function addThemes(map) { for (var k in map) THEMES[k] = map[k]; var q = WAIT; WAIT = []; q.forEach(function (f) { f(); }); }
+  function applyTheme(name, card) {
+    if (!name) return;
+    function go() {
+      var t = THEMES[name]; if (!t) return;
+      card.setAttribute("data-bb-theme", name);
+      ["desk", "stage", "slip"].forEach(function (k) { if (t[k]) card.style.setProperty("--bb-" + k, "url(" + t[k] + ")"); });
+    }
+    if (THEMES[name]) return go();
+    WAIT.push(go);
+    if (!BASE || document.getElementById("bb-themes")) return;
+    var s = document.createElement("script"); s.id = "bb-themes"; s.src = BASE + "themes.js"; document.head.appendChild(s);
+  }
+
   function render(target, payload) {
     css();
     var host = typeof target === "string" ? document.querySelector(target) : target;
@@ -433,9 +453,10 @@
     var state = el("span"); state.className = "sr-only";
     LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); });
     host.appendChild(card);
+    applyTheme(payload.theme, card);
     host.setAttribute("data-bb", VERSION + ":" + kind);
     reveal(card);
   }
 
-  root.BB = { render: render, version: VERSION, kinds: Object.keys(LAYOUTS), pick: PICK };
+  root.BB = { render: render, version: VERSION, kinds: Object.keys(LAYOUTS), pick: PICK, addThemes: addThemes };
 })(window);
