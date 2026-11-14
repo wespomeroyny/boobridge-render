@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.6.0";
+  var VERSION = "0.6.1";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   var THREE_URL = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
@@ -82,6 +82,7 @@
     ".bb-tick{flex:none;width:16px;height:16px;margin-top:4px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#b9f0c9,#2f9e5b 55%,#1c6b3c);box-shadow:0 1px 2px rgba(0,0,0,.3);position:relative}",
     ".bb-tick:after{content:'';position:absolute;left:5px;top:2.5px;width:4px;height:7px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}",
     ".bb-pt{font-size:16px;line-height:1.6;margin:0 0 6px}",
+    ".bb-lp{margin:0 0 16px}.bb-lp .k{display:block;font-size:16px;font-weight:600;line-height:1.4;margin:0 0 2px}.bb-lp .t{display:block;font-size:16px;line-height:1.6;color:var(--text-primary)}",
     ".bb-tbl{width:100%;border-collapse:collapse;font-size:15px;margin-top:8px}.bb-tbl th{text-align:left;font-weight:600;color:var(--text-secondary);padding:6px 10px 6px 0}.bb-tbl td{padding:7px 10px 7px 0;border-top:0.5px solid var(--border);vertical-align:top}",
     ".bb-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}",
     ".bb-chip{font-size:14px;padding:5px 12px;border-radius:999px;text-decoration:none;color:var(--text-primary);background:var(--surface-1);border:0.5px solid var(--border-strong);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 3px 3px -2px rgba(0,0,0,.25)}",
@@ -117,6 +118,15 @@
     if (cls) e.className = cls;
     if (text != null) e.textContent = text;
     return e;
+  }
+  // A point is "text", "Label: text" or [label, text]. A labelled point puts the label
+  // on its own bold line with space between points, so a list of them is scannable.
+  function point(t) {
+    var k = null, v = t;
+    if (Object.prototype.toString.call(t) === "[object Array]") { k = t[0]; v = t[1]; }
+    else if (typeof t === "string") { var m = /^([^:.!?\n]{2,48}):\s+([\s\S]+)$/.exec(t); if (m) { k = m[1]; v = m[2].charAt(0).toUpperCase() + m[2].slice(1); } }
+    if (!k) return el("p", "bb-pt", v);
+    var d = el("div", "bb-lp"); d.appendChild(el("span", "k", k)); d.appendChild(el("span", "t", v)); return d;
   }
   function css() {
     if (document.getElementById("bb-css")) return;
@@ -352,7 +362,7 @@
     answer: function (p, card) {
       card.classList.add("bb-bare");
       if (p.answer) card.appendChild(el("div", "bb-h", p.answer));
-      (p.points || []).forEach(function (t) { card.appendChild(el("p", "bb-pt", t)); });
+      (p.points || []).forEach(function (t) { card.appendChild(point(t)); });
       if (p.table && p.table.rows && p.table.rows.length) {
         var tb = el("table", "bb-tbl");
         if (p.table.head) { var hr = el("tr"); p.table.head.forEach(function (h) { hr.appendChild(el("th", null, h)); }); tb.appendChild(hr); }
