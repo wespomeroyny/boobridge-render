@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.4.0";
+  var VERSION = "0.5.0";
   var THREE_URL = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
   var TEX = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/";
 
@@ -97,6 +97,10 @@
     ".bb-prose p{font-size:16px;line-height:1.7;margin:0 0 12px;max-width:62ch}",
     ".bb-key{font-size:19px;line-height:1.45;font-weight:600;margin:4px 0 16px;padding:2px 0 2px 14px;border-left:3px solid var(--border-accent);max-width:56ch}",
     ".bb-say p{font-size:17px;line-height:1.7;margin:0 0 8px}.bb-say .ask{font-weight:600;margin-top:14px}",
+    ".bb-pane.pic{padding:10px}",
+    ".bb-pane img{display:block;width:100%;height:auto;border-radius:8px;background:var(--surface-1)}",
+    ".bb-pane.old img{opacity:.82}",
+    ".bb-pane .cap{font-size:14px;line-height:1.45;margin-top:8px;white-space:normal}",
     ".bb-fade{opacity:0;transform:translateY(6px);transition:opacity .5s ease,transform .5s ease}",
     ".bb-fade.in{opacity:1;transform:none}",
     "@media (prefers-reduced-motion: reduce){.bb-fade{transition:none;opacity:1;transform:none}.bb-dot.live{animation:none}}",
@@ -360,10 +364,14 @@
       var ba = el("div", "bb-ba");
       function pane(cls, d, fallback) {
         var n = el("div", "bb-pane " + cls); n.appendChild(el("div", "l", (d && d.label) || fallback));
+        var im = d && d.image;
+        if (im && /^(https:\/\/|data:image\/)/.test(im.src || "")) { var g = el("img"); g.src = im.src; g.alt = im.alt || ""; g.loading = "lazy"; n.appendChild(g); n.classList.add("pic"); }
         var text = String((d && d.text) || ""), mk = cls === "new" && p.changed ? text.indexOf(p.changed) : -1;
+        if (!text) return n;
+        if (n.classList.contains("pic")) { var cap = el("div", "cap"); n.appendChild(cap); var keep = n; n = cap; var done = function () { return keep; }; }
         if (mk < 0) n.appendChild(document.createTextNode(text));
         else { n.appendChild(document.createTextNode(text.slice(0, mk))); n.appendChild(el("mark", null, p.changed)); n.appendChild(document.createTextNode(text.slice(mk + p.changed.length))); }
-        return n;
+        return done ? done() : n;
       }
       ba.appendChild(pane("old", p.before, "BEFORE")); ba.appendChild(pane("new", p.after, "AFTER")); card.appendChild(ba);
       if (p.note) card.appendChild(el("p", "bb-check", p.note));
@@ -407,7 +415,7 @@
   // "moved" counts how often a user asked for a different shape, so the table can be tuned later.
   var PICK = {
     tiny: "line", did: "receipt", found: "answer", changed: "diff", broke: "diagnosis", choose: "columns",
-    status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken"
+    status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken", told: "receipt"
   };
   function pickForm(payload) {
     if (payload.kind && LAYOUTS[payload.kind]) return payload.kind;
