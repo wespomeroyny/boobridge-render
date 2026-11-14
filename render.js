@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.7.0";
+  var VERSION = "0.7.1";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
 
@@ -40,7 +40,13 @@
     ".bb-det summary{cursor:pointer;font-size:15px;font-weight:500;color:var(--text-secondary,#5f5e5a);padding:12px 0 4px}",
     ".bb-det ul{margin:0 0 6px;padding-left:20px}.bb-det li{font-size:15px;line-height:1.7}.bb-det b{font-weight:500}",
     ".bb-q{background:var(--bg-accent,#E6F1FB);border-radius:10px;padding:14px 16px;margin-top:12px}",
-    ".bb-q .qq{font-size:16px;font-weight:500;margin-bottom:8px;color:var(--text-primary,#1c1c1a)}",
+    ".bb-q .qh{display:flex;gap:12px;align-items:flex-start;margin-bottom:8px}",
+    ".bb-q .qq{flex:1;font-size:16px;font-weight:500;color:var(--text-primary,#1c1c1a)}",
+    ".bb-aids{display:flex;gap:6px;flex:none}",
+    ".bb-aid{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;line-height:1;cursor:help;user-select:none;color:var(--text-primary,#1c1c1a);background:var(--surface-2,#fff);border:1px solid var(--border-strong,#c9c7bd)}",
+    ".bb-aid:hover,.bb-aid:focus,.bb-aid.on{border-color:var(--text-primary,#1c1c1a);outline:none}",
+    ".bb-tip{display:none;margin:0 0 10px;padding:10px 12px;border-radius:8px;font-size:15px;line-height:1.55;color:var(--text-primary,#1c1c1a);background:var(--surface-2,#fff);border:0.5px solid var(--border-strong,#c9c7bd)}",
+    ".bb-tip.on{display:block}.bb-tip b{display:block;font-weight:600;margin-bottom:2px}.bb-tip div{margin-top:2px}",
     ".bb-q .c{display:flex;gap:10px;font-size:15px;line-height:1.6;color:var(--text-primary,#1c1c1a)}",
     ".bb-q .c b{font-weight:500;min-width:20px}",
     ".bb-note{display:flex;gap:12px;align-items:flex-start;padding:14px 18px}",
@@ -172,10 +178,30 @@
     d.items.forEach(function (it) { var li = el("li"); li.appendChild(el("b", null, it[0] + ": ")); li.appendChild(document.createTextNode(it[1])); ul.appendChild(li); });
     box.appendChild(ul); into.appendChild(box);
   }
+  // Every question carries three decision aids beside it: ? says more about the question,
+  // + gives the reasons to take the recommended choice, - gives its risks. Hovering or
+  // focusing an aid shows its text; a tap pins it, for screens with no hover. They show
+  // text only and never send a message, so they are not answer buttons.
+  var AIDS = [["?", "more", "More about this question"], ["+", "pros", "Reasons to do it"], ["\u2212", "risks", "Risks"]];
   function question(q, into) {
     if (!q) return;
-    var box = el("div", "bb-q bb-fade"); box.appendChild(el("div", "qq", q.q));
-    (q.choices || []).forEach(function (c, i) {
+    var box = el("div", "bb-q bb-fade"), head = el("div", "qh"), aids = el("div", "bb-aids"), tips = [], pinned = -1;
+    head.appendChild(el("div", "qq", q.q)); head.appendChild(aids); box.appendChild(head);
+    function show(i) { tips.forEach(function (t, j) { t.className = "bb-tip" + (j === i ? " on" : ""); aids.children[j].className = "bb-aid" + (j === pinned ? " on" : ""); }); }
+    AIDS.forEach(function (a, i) {
+      var b = el("span", "bb-aid", a[0]), v = q[a[1]], tip = el("div", "bb-tip");
+      b.tabIndex = 0; b.setAttribute("role", "note"); b.setAttribute("aria-label", a[2]);
+      tip.appendChild(el("b", null, a[2]));
+      (Object.prototype.toString.call(v) === "[object Array]" ? v : [v || "Not given in this reply."]).forEach(function (line) { tip.appendChild(el("div", null, line)); });
+      b.addEventListener("mouseenter", function () { show(i); }); b.addEventListener("focus", function () { show(i); });
+      b.addEventListener("mouseleave", function () { show(pinned); }); b.addEventListener("blur", function () { show(pinned); });
+      b.addEventListener("click", function () { pinned = pinned === i ? -1 : i; show(pinned); });
+      aids.appendChild(b); tips.push(tip); box.appendChild(tip);
+    });
+    var list = (q.choices || []).slice();
+    if (!list.length && /^(should|shall|do|does|did|is|are|can|could|will|would|has|have|want)\b/i.test(q.q || "")) list = ["Yes", "No"];
+    if (!list.length || !/^(something else|none of these)/i.test(list[list.length - 1])) list.push("Something else. I'll tell you.");
+    list.forEach(function (c, i) {
       var row = el("div", "c"); row.appendChild(el("b", null, String.fromCharCode(65 + i))); row.appendChild(el("span", null, c)); box.appendChild(row);
     });
     into.appendChild(box);
