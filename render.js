@@ -4,17 +4,15 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.6.1";
+  var VERSION = "0.7.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
-  var THREE_URL = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
-  var TEX = "https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/textures/planets/";
 
   var CSS = [
     ".bb{font-family:inherit;color:var(--text-primary,#1c1c1a);border:0.5px solid var(--border,#d9d7cf);border-radius:14px;overflow:hidden;background:var(--surface-2,#fff)}",
     ".bb *{box-sizing:border-box}",
-    ".bb-hero{position:relative;height:270px;background:#05070f;color:#fff;overflow:hidden}",
-    ".bb-hero canvas{position:absolute;inset:0;width:100%;height:100%;display:block}",
+    ".bb-hero{position:relative;height:270px;background:#140f0d;color:#fff;overflow:hidden}",
+    ".bb-hero .bb-art{position:absolute;right:0;top:0;height:100%;aspect-ratio:3/2;object-fit:cover;display:block}",
     ".bb-hero .bb-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,15,.92) 0%,rgba(5,7,15,.55) 42%,rgba(5,7,15,0) 70%)}",
     ".bb-hero .bb-over{position:absolute;left:22px;right:22px;top:20px;bottom:18px;display:flex;flex-direction:column;justify-content:space-between}",
     ".bb-eyebrow{font-size:13px;letter-spacing:.08em;color:#9fb4e8}",
@@ -110,7 +108,7 @@
     ".bb-fade{opacity:0;transform:translateY(6px);transition:opacity .5s ease,transform .5s ease}",
     ".bb-fade.in{opacity:1;transform:none}",
     "@media (prefers-reduced-motion: reduce){.bb-fade{transition:none;opacity:1;transform:none}.bb-dot.live{animation:none}}",
-    "@media (max-width:520px){.bb-title{font-size:22px;max-width:70%}.bb-sub{max-width:70%}.bb-hero{height:240px}.bb-ba,.bb-cols{grid-template-columns:1fr}}"
+    "@media (max-width:520px){.bb-title{font-size:22px;max-width:70%}.bb-sub{max-width:70%}.bb-hero{height:240px}.bb-hero .bb-art{width:100%;aspect-ratio:auto;object-position:50% 16%}.bb-ba,.bb-cols{grid-template-columns:1fr}}"
   ].join("");
 
   function el(tag, cls, text) {
@@ -135,101 +133,6 @@
   function still() {
     return root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
-  function script(url, done) {
-    if (root.THREE) return done(true);
-    var s = el("script"); s.src = url;
-    s.onload = function () { done(!!root.THREE); };
-    s.onerror = function () { done(false); };
-    document.head.appendChild(s);
-  }
-
-  /* ---- hero art -------------------------------------------------------------- */
-  function paintFallback(canvas) {
-    var w = canvas.width = canvas.clientWidth * 2, h = canvas.height = canvas.clientHeight * 2;
-    var x = canvas.getContext("2d");
-    var g = x.createLinearGradient(0, 0, 0, h);
-    g.addColorStop(0, "#05070f"); g.addColorStop(1, "#16204a");
-    x.fillStyle = g; x.fillRect(0, 0, w, h);
-    var r = x.createRadialGradient(w * .8, h * 1.1, 10, w * .8, h * 1.1, h);
-    r.addColorStop(0, "rgba(120,170,255,.9)"); r.addColorStop(1, "rgba(120,170,255,0)");
-    x.fillStyle = r; x.fillRect(0, 0, w, h);
-    x.fillStyle = "#fff";
-    for (var i = 0; i < 220; i++) x.fillRect((i * 7919) % w, (i * 104729) % h, 2, 2);
-  }
-
-  function globe(canvas, report) {
-    var T = root.THREE, renderer;
-    try {
-      renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true, alpha: false });
-    } catch (e) { paintFallback(canvas); return report("painted"); }
-    renderer.setPixelRatio(Math.min(root.devicePixelRatio || 1, 2));
-    var scene = new T.Scene();
-    scene.background = new T.Color(0x05070f);
-    var cam = new T.PerspectiveCamera(32, 2, 0.1, 100);
-    cam.position.set(-1.25, 0.25, 4.6);
-    cam.lookAt(-1.25, -0.1, 0);
-
-    var sun = new T.DirectionalLight(0xfff4e0, 1.25); sun.position.set(-4, 2.2, 3.5); scene.add(sun);
-    scene.add(new T.AmbientLight(0x23304f, 0.9));
-
-    var loader = new T.TextureLoader(); loader.setCrossOrigin("anonymous");
-    var earth = new T.Mesh(new T.SphereGeometry(1.45, 64, 64),
-      new T.MeshPhongMaterial({ color: 0x224488, shininess: 16, specular: new T.Color(0x333333) }));
-    earth.rotation.z = 0.41;
-    var world = new T.Group(); world.position.set(0.55, -0.55, 0); world.add(earth); scene.add(world);
-    var loaded = 0;
-    loader.load(TEX + "earth_atmos_2048.jpg", function (t) {
-      earth.material.map = t; earth.material.color.set(0xffffff); earth.material.needsUpdate = true;
-      loaded++; report("photo");
-    }, undefined, function () { report("globe, no photo"); });
-    loader.load(TEX + "earth_specular_2048.jpg", function (t) { earth.material.specularMap = t; earth.material.needsUpdate = true; });
-    var clouds = new T.Mesh(new T.SphereGeometry(1.47, 64, 64),
-      new T.MeshLambertMaterial({ transparent: true, opacity: 0, depthWrite: false }));
-    clouds.rotation.z = 0.41; world.add(clouds);
-    loader.load(TEX + "earth_clouds_1024.png", function (t) { clouds.material.map = t; clouds.material.opacity = 0.85; clouds.material.needsUpdate = true; });
-
-    var halo = new T.Mesh(new T.SphereGeometry(1.56, 48, 48),
-      new T.MeshBasicMaterial({ color: 0x4f8dff, transparent: true, opacity: 0.13, side: T.BackSide }));
-    world.add(halo);
-
-    var n = 900, pos = new Float32Array(n * 3);
-    for (var i = 0; i < n; i++) {
-      var a = Math.random() * 6.283, b = Math.acos(2 * Math.random() - 1), d = 30 + Math.random() * 30;
-      pos[i * 3] = d * Math.sin(b) * Math.cos(a); pos[i * 3 + 1] = d * Math.cos(b); pos[i * 3 + 2] = -Math.abs(d * Math.sin(b) * Math.sin(a));
-    }
-    var sg = new T.BufferGeometry(); sg.setAttribute("position", new T.BufferAttribute(pos, 3));
-    scene.add(new T.Points(sg, new T.PointsMaterial({ color: 0xffffff, size: 0.16, sizeAttenuation: true })));
-
-    var ringPts = [];
-    for (var k = 0; k <= 128; k++) { var th = k / 128 * 6.283; ringPts.push(new T.Vector3(Math.cos(th) * 2.05, 0, Math.sin(th) * 2.05)); }
-    var ring = new T.Line(new T.BufferGeometry().setFromPoints(ringPts),
-      new T.LineBasicMaterial({ color: 0x9fb4e8, transparent: true, opacity: 0.35 }));
-    var orbit = new T.Group(); orbit.rotation.set(0.5, 0, 0.35); orbit.add(ring);
-    var sat = new T.Mesh(new T.SphereGeometry(0.035, 12, 12), new T.MeshBasicMaterial({ color: 0xffd98a }));
-    orbit.add(sat); world.add(orbit);
-
-    function size() {
-      var w = canvas.clientWidth, h = canvas.clientHeight;
-      if (!w || !h) return;
-      renderer.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix();
-    }
-    size(); root.addEventListener("resize", size);
-
-    var visible = true, t0 = performance.now();
-    if (root.IntersectionObserver) {
-      new IntersectionObserver(function (es) { visible = es[0].isIntersecting; }).observe(canvas);
-    }
-    function frame(now) {
-      var t = (now - t0) / 1000;
-      earth.rotation.y = 2.4 + t * 0.05; clouds.rotation.y = 2.4 + t * 0.065;
-      sat.position.set(Math.cos(t * 0.5) * 2.05, 0, Math.sin(t * 0.5) * 2.05);
-      renderer.render(scene, cam);
-    }
-    function loop(now) { if (visible) frame(now); if (!still()) root.requestAnimationFrame(loop); }
-    if (still()) { var tries = 0; var iv = setInterval(function () { frame(performance.now()); if (++tries > 12) clearInterval(iv); }, 400); }
-    else root.requestAnimationFrame(loop);
-  }
-
   /* ---- shared parts ---------------------------------------------------------- */
   function tiles(list) {
     var wrap = el("div", "bb-tiles");
@@ -285,9 +188,18 @@
   /* ---- layouts, one per kind of reply ---------------------------------------- */
   var LAYOUTS = {
     mission: function (p, card, report) {
-      var hero = el("div", "bb-hero"), canvas = el("canvas");
-      canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", "The Earth turning slowly in space");
-      hero.appendChild(canvas); hero.appendChild(el("div", "bb-shade"));
+      // The hero art is a short muted clip of a cartoon dragon painted on a brick wall. With
+      // motion turned off, or if the clip cannot load, the same wall shows as a still picture.
+      var hero = el("div", "bb-hero"), art = el(still() ? "img" : "video", "bb-art"), alt = "A cartoon dragon in a red bucket hat, painted on a brick wall, nodding to a beat";
+      if (still()) { art.src = BASE + "dragon-poster.jpg"; art.alt = alt; report("dragon, still"); }
+      else {
+        art.muted = true; art.loop = true; art.autoplay = true; art.playsInline = true;
+        art.setAttribute("muted", ""); art.setAttribute("playsinline", ""); art.setAttribute("aria-label", alt);
+        art.poster = BASE + "dragon-poster.jpg"; art.src = BASE + "dragon-loop.mp4";
+        art.addEventListener("playing", function () { report("dragon, moving"); });
+        art.addEventListener("error", function () { report("dragon, no clip"); });
+      }
+      hero.appendChild(art); hero.appendChild(el("div", "bb-shade"));
       var over = el("div", "bb-over"), top = el("div");
       if (p.eyebrow) top.appendChild(el("div", "bb-eyebrow", p.eyebrow));
       top.appendChild(el("div", "bb-title", p.title));
@@ -302,7 +214,6 @@
       if (p.tiles) body.appendChild(tiles(p.tiles));
       sections(p.sections, body); details(p.details, body); question(p.question, body);
       card.appendChild(body);
-      script(THREE_URL, function (ok) { if (ok) globe(canvas, report); else { paintFallback(canvas); report("painted"); } });
     },
     diagnosis: function (p, card) {
       var body = el("div", "bb-body"); body.style.paddingTop = "16px";
