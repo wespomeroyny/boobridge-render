@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.7.1";
+  var VERSION = "0.7.2";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
 
@@ -43,8 +43,10 @@
     ".bb-q .qh{display:flex;gap:12px;align-items:flex-start;margin-bottom:8px}",
     ".bb-q .qq{flex:1;font-size:16px;font-weight:500;color:var(--text-primary,#1c1c1a)}",
     ".bb-aids{display:flex;gap:6px;flex:none}",
-    ".bb-aid{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;line-height:1;cursor:help;user-select:none;color:var(--text-primary,#1c1c1a);background:var(--surface-2,#fff);border:1px solid var(--border-strong,#c9c7bd)}",
-    ".bb-aid:hover,.bb-aid:focus,.bb-aid.on{border-color:var(--text-primary,#1c1c1a);outline:none}",
+    ".bb-aid{box-sizing:border-box;width:28px;height:28px;border-radius:50%;display:block;padding:0;cursor:pointer;user-select:none;color:var(--text-primary,#1c1c1a);background:var(--surface-2,#fff);border:1px solid var(--border-strong,#c9c7bd)}",
+    ".bb-aid svg{display:block;width:100%;height:100%}",
+    ".bb-aid:focus-visible{outline:2px solid var(--text-primary,#1c1c1a);outline-offset:1px}",
+    ".bb-aid.on{border-color:var(--text-primary,#1c1c1a);background:var(--text-primary,#1c1c1a);color:var(--surface-2,#fff)}",
     ".bb-tip{display:none;margin:0 0 10px;padding:10px 12px;border-radius:8px;font-size:15px;line-height:1.55;color:var(--text-primary,#1c1c1a);background:var(--surface-2,#fff);border:0.5px solid var(--border-strong,#c9c7bd)}",
     ".bb-tip.on{display:block}.bb-tip b{display:block;font-weight:600;margin-bottom:2px}.bb-tip div{margin-top:2px}",
     ".bb-q .c{display:flex;gap:10px;font-size:15px;line-height:1.6;color:var(--text-primary,#1c1c1a)}",
@@ -140,6 +142,13 @@
     return root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
   /* ---- shared parts ---------------------------------------------------------- */
+  // A list row written "Label: text" draws the label bold, so a column of rows can be scanned.
+  function lead(text) {
+    var s = el("span"), m = typeof text === "string" && /^([^:.!?\n]{2,48}):\s+([\s\S]+)$/.exec(text);
+    if (!m) { s.textContent = text == null ? "" : text; return s; }
+    var b = el("b", null, m[1] + ": "); b.style.fontWeight = "600";
+    s.appendChild(b); s.appendChild(document.createTextNode(m[2])); return s;
+  }
   function tiles(list) {
     var wrap = el("div", "bb-tiles");
     (list || []).forEach(function (t) {
@@ -179,23 +188,29 @@
     box.appendChild(ul); into.appendChild(box);
   }
   // Every question carries three decision aids beside it: ? says more about the question,
-  // + gives the reasons to take the recommended choice, - gives its risks. Hovering or
-  // focusing an aid shows its text; a tap pins it, for screens with no hover. They show
-  // text only and never send a message, so they are not answer buttons.
-  var AIDS = [["?", "more", "More about this question"], ["+", "pros", "Reasons to do it"], ["\u2212", "risks", "Risks"]];
+  // + gives the reasons to take the recommended choice, - gives its risks. A click or tap
+  // opens an aid's text and a second one closes it - the same on a desktop as on a phone,
+  // never on hover. They show text only and never send a message, so they are not answer
+  // buttons. The marks are drawn as shapes, not typed characters, because a typed ? + or -
+  // sits off-centre in its circle by a different amount in every font.
+  var MARK = '<svg viewBox="0 0 26 26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+  var AIDS = [
+    [MARK + '<path d="M10 10.2a3 3 0 1 1 4.6 2.5c-1 .7-1.6 1.2-1.6 2.5"/><path d="M13 18.6v.1"/></svg>', "more", "More about this question"],
+    [MARK + '<path d="M13 8v10M8 13h10"/></svg>', "pros", "Reasons to do it"],
+    [MARK + '<path d="M8 13h10"/></svg>', "risks", "Risks"]];
   function question(q, into) {
     if (!q) return;
     var box = el("div", "bb-q bb-fade"), head = el("div", "qh"), aids = el("div", "bb-aids"), tips = [], pinned = -1;
     head.appendChild(el("div", "qq", q.q)); head.appendChild(aids); box.appendChild(head);
-    function show(i) { tips.forEach(function (t, j) { t.className = "bb-tip" + (j === i ? " on" : ""); aids.children[j].className = "bb-aid" + (j === pinned ? " on" : ""); }); }
+    function show(i) { tips.forEach(function (t, j) { t.className = "bb-tip" + (j === i ? " on" : ""); aids.children[j].className = "bb-aid" + (j === i ? " on" : ""); aids.children[j].setAttribute("aria-expanded", j === i ? "true" : "false"); }); }
     AIDS.forEach(function (a, i) {
-      var b = el("span", "bb-aid", a[0]), v = q[a[1]], tip = el("div", "bb-tip");
-      b.tabIndex = 0; b.setAttribute("role", "note"); b.setAttribute("aria-label", a[2]);
+      var b = el("span", "bb-aid"), v = q[a[1]], tip = el("div", "bb-tip");
+      b.innerHTML = a[0]; b.tabIndex = 0; b.setAttribute("role", "button"); b.setAttribute("aria-label", a[2]); b.setAttribute("aria-expanded", "false");
       tip.appendChild(el("b", null, a[2]));
       (Object.prototype.toString.call(v) === "[object Array]" ? v : [v || "Not given in this reply."]).forEach(function (line) { tip.appendChild(el("div", null, line)); });
-      b.addEventListener("mouseenter", function () { show(i); }); b.addEventListener("focus", function () { show(i); });
-      b.addEventListener("mouseleave", function () { show(pinned); }); b.addEventListener("blur", function () { show(pinned); });
-      b.addEventListener("click", function () { pinned = pinned === i ? -1 : i; show(pinned); });
+      function flip() { pinned = pinned === i ? -1 : i; show(pinned); }
+      b.addEventListener("click", flip);
+      b.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } });
       aids.appendChild(b); tips.push(tip); box.appendChild(tip);
     });
     var list = (q.choices || []).slice();
@@ -291,7 +306,7 @@
       if (p.result) card.appendChild(el("div", "bb-h", p.result));
       if (p.changed && p.changed.length) {
         var slip = el("div", "bb-slip"); slip.appendChild(el("div", "l", p.label || "What changed"));
-        p.changed.forEach(function (c) { var r = el("div", "bb-done"); r.appendChild(el("span", "bb-tick")); r.appendChild(el("span", null, c)); slip.appendChild(r); });
+        p.changed.forEach(function (c) { var r = el("div", "bb-done"); r.appendChild(el("span", "bb-tick")); r.appendChild(lead(c)); slip.appendChild(r); });
         card.appendChild(slip);
       }
       details(p.details, card); question(p.question, card);
