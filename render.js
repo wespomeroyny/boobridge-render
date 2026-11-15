@@ -4,9 +4,13 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.9.0";
+  var VERSION = "0.10.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
+  // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
+  // i4 readout), one calm header scene and a border frame, under elements/<look>/ beside this
+  // file. LOOK is the look of the card being drawn; it is set only while a layout runs.
+  var LOOKS = ["graffiti", "forest", "mech", "story"], LOOK = null;
 
   var CSS = [
     ".bb{font-family:inherit;color:var(--text-primary,#1c1c1a);border:0.5px solid var(--border,#d9d7cf);border-radius:14px;overflow:hidden;background:var(--surface-2,#fff)}",
@@ -42,6 +46,29 @@
     ".bb-meta{margin-top:14px;border-radius:10px;background:var(--surface-1,#f6f5f1);padding:0 14px}",
     ".bb-meta summary{cursor:pointer;font-size:16px;color:var(--text-secondary,#5f5e5a);padding:10px 0}",
     ".bb-meta ul{margin:0;padding:0 0 10px 20px}.bb-meta li{font-size:16px;line-height:1.7}.bb-meta b{font-weight:500}",
+    ".bb[data-bb-look],.bb.bb-bare[data-bb-look]{position:relative;overflow:hidden;background:var(--lk-bg);border:var(--lk-bw) solid transparent;border-image-slice:var(--lk-sl);border-image-width:var(--lk-bw);border-image-repeat:round;border-radius:6px;font-family:var(--lk-ff,inherit)}",
+    ".bb.bb-bare[data-bb-look]{padding:10px 12px 14px}",
+    ".bb[data-bb-look]>*{position:relative}",
+    ".bb[data-bb-look=graffiti]{--lk-bg:#f6f5f2;--text-primary:#1c1c1a;--text-secondary:#55534e;--border:rgba(0,0,0,.12);--border-strong:rgba(0,0,0,.22);--surface-1:#eceae5;--surface-2:#fbfaf8;--bg-accent:#d9f1ee;--border-accent:#12a394;--bg-ok:#12b3a6;--text-ok:#06211f;--lk-sl:28;--lk-bw:12px}",
+    ".bb[data-bb-look=forest]{--lk-bg:#f1f5ea;--text-primary:#22301c;--text-secondary:#4d5c44;--border:rgba(40,70,20,.16);--border-strong:rgba(40,70,20,.3);--surface-1:#e4ebd8;--surface-2:#f9fbf4;--bg-accent:#dde8cc;--border-accent:#3f7d2c;--bg-ok:#3f7d2c;--text-ok:#fff;--lk-sl:56;--lk-bw:22px}",
+    ".bb[data-bb-look=mech]{--lk-bg:#161d28;--text-primary:#e8edf3;--text-secondary:#9fb0c3;--border:rgba(160,200,255,.16);--border-strong:rgba(160,200,255,.3);--surface-1:#212c3b;--surface-2:#0f1620;--bg-accent:#14344d;--border-accent:#4fb6ff;--bg-ok:#0b2a3d;--text-ok:#7fd6ff;--lk-sl:54;--lk-bw:18px;--lk-lf:ui-monospace,Consolas,monospace;--lk-so:.7}",
+    ".bb[data-bb-look=story]{--lk-bg:#fbf6ea;--text-primary:#4a3b2a;--text-secondary:#7a6851;--border:rgba(110,80,40,.2);--border-strong:rgba(110,80,40,.36);--surface-1:#f2e9d5;--surface-2:#fffaf0;--bg-accent:#f1e4c8;--border-accent:#b08a4a;--bg-ok:#f0d9b0;--text-ok:#5a4120;--lk-sl:78;--lk-bw:24px;--lk-ff:Georgia,'Times New Roman',serif;--lk-so:.9}",
+    ".bb img.bb-scene{position:absolute;right:0;top:0;width:58%;height:88px;object-fit:cover;object-position:70% 55%;opacity:.45;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 60%),linear-gradient(180deg,#000 35%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent 0,#000 60%),linear-gradient(180deg,#000 35%,transparent 100%);mask-composite:intersect}",
+    ".bb img.bb-scene.hd{height:100%;opacity:var(--lk-so,.8);-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 55%);mask-image:linear-gradient(90deg,transparent 0,#000 55%)}",
+    ".bb-lh{position:relative;min-height:96px;display:flex;align-items:center;padding:6px 10px;overflow:hidden}",
+    ".bb-lh>div{position:relative}.bb-lh .ti{font-size:20px;font-weight:500}.bb-lh .sb{font-size:16px;color:var(--text-secondary)}",
+    ".bb-lh .st{display:flex;align-items:center;gap:8px;font-size:16px;color:var(--text-secondary)}",
+    ".bb[data-bb-look] .bb-body{padding:0 10px 10px}",
+    ".bb[data-bb-look] .bb-sec,.bb[data-bb-look] .bb-body>.bb-sec:first-child{padding:7px 0;margin-top:0;border-top:1px solid var(--border)}",
+    ".bb[data-bb-look] .bb-sec .l{font-family:var(--lk-lf,inherit);margin-bottom:0}",
+    ".bb[data-bb-look] .bb-ul{list-style:none;padding-left:0}.bb[data-bb-look] .bb-ul li{line-height:1.45;margin:0}",
+    ".bb[data-bb-look] .bb-row{padding:1px 0}.bb[data-bb-look] .bb-row+.bb-row{border-top:0}",
+    ".bb[data-bb-look] .bb-meta{background:transparent;padding:0;margin:0}.bb[data-bb-look] .bb-meta summary{color:var(--text-primary);padding:4px 0}",
+    ".bb[data-bb-look] .bb-q{margin-top:8px}",
+    ".bb-im{display:flex;gap:12px;align-items:center}.bb-im>.tx{flex:1;min-width:0}.bb-im .bb-h{margin:0}",
+    ".bb-ic{flex:none;width:44px;height:44px;object-fit:contain;filter:drop-shadow(0 3px 2px rgba(0,0,0,.3))}.bb-ic.sm{width:24px;height:24px}",
+    ".bb-ic.ng{animation:bbng 2.6s ease-in-out infinite alternate}@keyframes bbng{to{transform:translateX(5px)}}",
+    ".bb.bb-tsw{margin:0 0 12px}.bb-tsw .bb-lh{min-height:72px}",
     ".bb-flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;padding-top:6px}",
     ".bb-step{flex:1 1 130px;border:0.5px solid var(--border-strong,#c9c7bd);border-radius:10px;padding:10px 12px;background:var(--surface-1,#f6f5f1)}",
     ".bb-step .l{font-size:16px;font-weight:500;color:var(--text-secondary,#5f5e5a)}",
@@ -125,8 +152,8 @@
     ".bb-pane .cap{font-size:16px;line-height:1.45;margin-top:8px;white-space:normal}",
     ".bb-fade{opacity:0;transform:translateY(6px);transition:opacity .5s ease,transform .5s ease}",
     ".bb-fade.in{opacity:1;transform:none}",
-    "@media (prefers-reduced-motion: reduce){.bb-fade{transition:none;opacity:1;transform:none}.bb-dot.live{animation:none}}",
-    "@media (max-width:520px){.bb-title{font-size:24px;max-width:none}.bb-sub{max-width:none}.bb-hero{height:auto}.bb-hero .bb-art{position:relative;width:100%;height:auto;aspect-ratio:3/2}.bb-hero .bb-shade{display:none}.bb-hero .bb-over{position:relative;left:auto;right:auto;top:auto;bottom:auto;padding:14px 18px 16px;gap:12px}.bb-ba,.bb-cols{grid-template-columns:1fr}}"
+    "@media (prefers-reduced-motion: reduce){.bb-fade{transition:none;opacity:1;transform:none}.bb-dot.live,.bb-ic.ng{animation:none}}",
+    "@media (max-width:520px){.bb-title{font-size:24px;max-width:none}.bb-sub{max-width:none}.bb-hero{height:auto}.bb-hero .bb-art{position:relative;width:100%;height:auto;aspect-ratio:3/2}.bb-hero .bb-shade{display:none}.bb-hero .bb-over{position:relative;left:auto;right:auto;top:auto;bottom:auto;padding:14px 18px 16px;gap:12px}.bb-ba,.bb-cols{grid-template-columns:1fr}.bb-ic{width:38px;height:38px}.bb-im{gap:10px}.bb-lh{min-height:84px}.bb img.bb-scene{width:64%}}"
   ].join("");
 
   function el(tag, cls, text) {
@@ -189,8 +216,32 @@
       into.appendChild(d);
     });
   }
+  // A look's picture: a category picture (i1..i4), or its header scene.
+  function pic(name, cls, look) {
+    var i = el("img", cls || "bb-ic"); i.src = BASE + "elements/" + (look || LOOK) + "/" + name + ".webp"; i.alt = ""; return i;
+  }
+  // Put a look's category picture beside a block. With no look the block is returned as it is.
+  // An empty name keeps the indent without a picture, so sections line up.
+  function beside(name, node) {
+    if (!LOOK) return node;
+    var w = el("div", "bb-im"), t = el("div", "tx");
+    w.appendChild(name ? pic(name, "bb-ic" + (name === "i2" ? " ng" : "")) : el("span", "bb-ic"));
+    t.appendChild(node); w.appendChild(t); return w;
+  }
+  // A look's header: the title and status on the left, the calm scene fading in from the right.
+  function lookHead(p, card, look) {
+    var h = el("div", "bb-lh"), d = el("div");
+    h.appendChild(pic("scene", "bb-scene hd", look));
+    d.appendChild(el("div", "ti", p.title));
+    if (p.sub) d.appendChild(el("div", "sb", p.sub));
+    if (p.status) {
+      var st = el("div", "st"); st.appendChild(el("span", "bb-dot live" + (p.status.tone === "warn" ? " warn" : p.status.tone === "bad" ? " bad" : "")));
+      st.appendChild(el("span", null, p.status.text)); d.appendChild(st);
+    }
+    h.appendChild(d); card.appendChild(h);
+  }
   // A titled list of short lines. A line is "text", "Label: text" or [label, text].
-  function lines(label, list, into) {
+  function lines(label, list, into, icon) {
     if (!list || !list.length) return;
     var d = el("div", "bb-sec bb-fade"), ul = el("ul", "bb-ul");
     d.appendChild(el("div", "l", label));
@@ -200,7 +251,9 @@
       else li.appendChild(lead(t));
       ul.appendChild(li);
     });
-    d.appendChild(ul); into.appendChild(d);
+    if (LOOK) { var b = el("div"); b.appendChild(d.firstChild); b.appendChild(ul); d.appendChild(beside(icon || "", b)); }
+    else d.appendChild(ul);
+    into.appendChild(d);
   }
   // One roadmap-style row: an ID, a plain one-line meaning, and a state on the right.
   // An item is {id, text, state} or [id, text, state]; only "Ready" is tinted.
@@ -255,6 +308,7 @@
     into.appendChild(box);
   }
   function hero(p, card, report) {
+    if (LOOK) return lookHead(p, card);
     // The hero art is a short muted clip of a cartoon dragon painted on a brick wall. With
     // motion turned off, or if the clip cannot load, the same wall shows as a still picture.
     var hero = el("div", "bb-hero"), art = el(still() ? "img" : "video", "bb-art"), alt = "A cartoon dragon in a red bucket hat, painted on a brick wall, nodding to a beat";
@@ -298,23 +352,25 @@
     brief: function (p, card, report) {
       hero(p, card, report);
       var body = el("div", "bb-body");
-      lines("Last time", p.last, body);
+      lines("Last time", p.last, body, "i1");
       lines("New", p.fresh, body);
       if (p.next && p.next.length) {
-        var d = el("div", "bb-sec bb-fade"); d.appendChild(el("div", "l", "Next up"));
-        p.next.forEach(function (it) { d.appendChild(row(it)); });
+        var d = el("div", "bb-sec bb-fade"), nx = el("div"); nx.appendChild(el("div", "l", "Next up"));
+        p.next.forEach(function (it) { nx.appendChild(row(it)); });
         if (p.more && p.more.length) {
           var m = el("details", "bb-det"); m.appendChild(el("summary", null, p.moreLabel || p.more.length + " more open"));
-          p.more.forEach(function (it) { m.appendChild(row(it)); }); d.appendChild(m);
+          p.more.forEach(function (it) { m.appendChild(row(it)); }); nx.appendChild(m);
         }
-        body.appendChild(d);
+        d.appendChild(beside("i2", nx)); body.appendChild(d);
       }
-      lines("Problems", p.problems, body);
+      lines("Problems", p.problems, body, "i3");
       if (p.meta && p.meta.line) {
         var box = el("details", "bb-meta bb-fade"), ul = el("ul");
         box.appendChild(el("summary", null, p.meta.line));
         (p.meta.items || []).forEach(function (it) { var li = el("li"); li.appendChild(el("b", null, it[0] + ": ")); li.appendChild(document.createTextNode(it[1])); ul.appendChild(li); });
-        box.appendChild(ul); body.appendChild(box);
+        box.appendChild(ul);
+        if (LOOK) { var ms = el("div", "bb-sec"); ms.appendChild(beside("i4", box)); body.appendChild(ms); }
+        else body.appendChild(box);
       }
       question(p.question, body);
       card.appendChild(body);
@@ -323,7 +379,7 @@
       var body = el("div", "bb-body"); body.style.paddingTop = "16px";
       var head = el("div"); head.style.cssText = "display:flex;justify-content:space-between;gap:12px;align-items:center";
       var ti = el("div", null, p.title); ti.style.cssText = "font-size:22px;font-weight:500"; head.appendChild(ti);
-      body.appendChild(head);
+      body.appendChild(beside("i3", head));
       var flow = el("div", "bb-flow");
       (p.flow || []).forEach(function (s) {
         var st = el("div", "bb-step bb-fade" + (s.hot ? " hot" : "")); st.appendChild(el("div", "l", s.label)); st.appendChild(el("div", "t", s.text)); flow.appendChild(st);
@@ -334,7 +390,7 @@
     },
     line: function (p, card) {
       card.classList.add("bb-bare");
-      var l = el("div", "bb-line"); l.appendChild(el("span", "bb-orb" + (p.tone && p.tone !== "ok" ? " " + p.tone : ""))); l.appendChild(el("span", null, p.text)); card.appendChild(l);
+      var l = el("div", "bb-line"); l.appendChild(LOOK ? pic(p.tone && p.tone !== "ok" ? "i3" : "i1", "bb-ic sm") : el("span", "bb-orb" + (p.tone && p.tone !== "ok" ? " " + p.tone : ""))); l.appendChild(el("span", null, p.text)); card.appendChild(l);
     },
     draft: function (p, card) {
       card.classList.add("bb-bare");
@@ -366,7 +422,7 @@
     },
     receipt: function (p, card) {
       card.classList.add("bb-bare");
-      if (p.result) card.appendChild(el("div", "bb-h", p.result));
+      if (p.result) card.appendChild(beside("i1", el("div", "bb-h", p.result)));
       if (p.changed && p.changed.length) {
         var slip = el("div", "bb-slip"); slip.appendChild(el("div", "l", p.label || "What changed"));
         p.changed.forEach(function (c) { var r = el("div", "bb-done"); r.appendChild(el("span", "bb-tick")); r.appendChild(lead(c)); slip.appendChild(r); });
@@ -409,7 +465,7 @@
     },
     columns: function (p, card) {
       card.classList.add("bb-bare");
-      if (p.title) card.appendChild(el("div", "bb-h", p.title));
+      if (p.title) card.appendChild(beside("i2", el("div", "bb-h", p.title)));
       var cols = el("div", "bb-cols"), rows = p.rows || [];
       (p.options || []).forEach(function (o) {
         var c = el("div", "bb-opt" + (o.pick ? " pick" : "")), nm = el("div", "nm", o.name);
@@ -436,6 +492,23 @@
       if (p.ask) w.appendChild(el("p", "ask", p.ask));
       card.appendChild(w);
     },
+    // The looks on offer, each drawn in its own look, so "show me the themes" shows them.
+    themes: function (p, card) {
+      card.classList.add("bb-bare");
+      card.appendChild(el("div", "bb-h", p.title || "Themes you can switch to"));
+      [["default", "Default", "The plain look."], ["graffiti", "Graffiti dragon", "Brick, spray paint and street colour."],
+       ["forest", "Primal forest", "Moss, vines and misty trees."], ["mech", "Mech hangar", "Armor plate and hangar lights."],
+       ["story", "Storybook", "Soft ink lines and watercolour."]].forEach(function (t) {
+        var c = el("div", "bb bb-tsw"), look = t[0] === "default" ? null : t[0], d = { title: t[1], sub: t[2] };
+        if ((p.current || "default") === t[0]) d.status = { text: "In use", tone: "ok" };
+        if (look) { dress(c, look); lookHead(d, c, look); }
+        else { var h = el("div", "bb-lh"), x = el("div"); x.appendChild(el("div", "ti", d.title)); x.appendChild(el("div", "sb", d.sub));
+          if (d.status) { var st = el("div", "st"); st.appendChild(el("span", "bb-dot")); st.appendChild(el("span", null, d.status.text)); x.appendChild(st); }
+          h.appendChild(x); c.appendChild(h); }
+        card.appendChild(c);
+      });
+      question(p.question, card);
+    },
     note: function (p, card) {
       var n = el("div", "bb-note"); n.appendChild(el("div", "m")); n.appendChild(el("div", "t", p.text)); card.appendChild(n);
     }
@@ -446,7 +519,7 @@
   var PICK = {
     tiny: "line", did: "receipt", found: "answer", changed: "diff", broke: "diagnosis", choose: "columns",
     status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken", told: "receipt",
-    open: "brief"
+    open: "brief", themes: "themes"
   };
   function pickForm(payload) {
     if (payload.kind && LAYOUTS[payload.kind]) return payload.kind;
@@ -469,6 +542,11 @@
     var s = document.createElement("script"); s.id = "bb-themes"; s.src = BASE + "themes.js"; document.head.appendChild(s);
   }
 
+  // Put a look on a card: its colours and type come from the stylesheet, its frame from here.
+  function dress(card, look) {
+    card.setAttribute("data-bb-look", look);
+    card.style.borderImageSource = "url(" + BASE + "elements/" + look + "/frame.webp)";
+  }
   function render(target, payload) {
     css();
     var host = typeof target === "string" ? document.querySelector(target) : target;
@@ -477,12 +555,19 @@
     var card = el("div", "bb");
     var kind = pickForm(payload);
     var state = el("span"); state.className = "sr-only";
-    LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); });
+    var look = LOOKS.indexOf(payload.theme) >= 0 ? payload.theme : null;
+    if (look) dress(card, look);
+    LOOK = look;
+    try { LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); }); }
+    finally { LOOK = null; }
+    // Forms with no header of their own get the scene as a faint corner; one-liners get none.
+    if (look && ["mission", "brief", "themes", "line", "note"].indexOf(kind) < 0) card.insertBefore(pic("scene", "bb-scene", look), card.firstChild);
     host.appendChild(card);
-    applyTheme(payload.theme, card);
+    if (!look) applyTheme(payload.theme, card);
+    if (look) host.setAttribute("data-bb-look", look);
     host.setAttribute("data-bb", VERSION + ":" + kind);
     reveal(card);
   }
 
-  root.BB = { render: render, version: VERSION, kinds: Object.keys(LAYOUTS), pick: PICK, addThemes: addThemes };
+  root.BB = { render: render, version: VERSION, kinds: Object.keys(LAYOUTS), pick: PICK, looks: LOOKS, addThemes: addThemes };
 })(window);
