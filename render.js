@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.7.2";
+  var VERSION = "0.7.3";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
 
@@ -116,7 +116,7 @@
     ".bb-fade{opacity:0;transform:translateY(6px);transition:opacity .5s ease,transform .5s ease}",
     ".bb-fade.in{opacity:1;transform:none}",
     "@media (prefers-reduced-motion: reduce){.bb-fade{transition:none;opacity:1;transform:none}.bb-dot.live{animation:none}}",
-    "@media (max-width:520px){.bb-title{font-size:22px;max-width:70%}.bb-sub{max-width:70%}.bb-hero{height:240px}.bb-hero .bb-art{width:100%;aspect-ratio:auto;object-position:50% 16%}.bb-ba,.bb-cols{grid-template-columns:1fr}}"
+    "@media (max-width:520px){.bb-title{font-size:22px;max-width:none}.bb-sub{max-width:none}.bb-hero{height:auto}.bb-hero .bb-art{position:relative;width:100%;height:auto;aspect-ratio:3/2}.bb-hero .bb-shade{display:none}.bb-hero .bb-over{position:relative;left:auto;right:auto;top:auto;bottom:auto;padding:14px 18px 16px;gap:12px}.bb-ba,.bb-cols{grid-template-columns:1fr}}"
   ].join("");
 
   function el(tag, cls, text) {
