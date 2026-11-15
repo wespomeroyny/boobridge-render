@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.8.0";
+  var VERSION = "0.9.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
 
@@ -32,6 +32,16 @@
     ".bb-sec{border-top:0.5px solid var(--border-strong,#c9c7bd);padding:14px 0 12px;margin-top:12px}",
     ".bb-sec .l{font-size:18px;font-weight:500;margin-bottom:4px}",
     ".bb-sec .t{font-size:16px;line-height:1.6}",
+    ".bb-body>.bb-sec:first-child{border-top:0;margin-top:0}",
+    ".bb-ul{margin:0;padding-left:20px}.bb-ul li{font-size:16px;line-height:1.6;margin:2px 0}.bb-ul b{font-weight:500}",
+    ".bb-row{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;padding:7px 0;font-size:16px;line-height:1.5}",
+    ".bb-row+.bb-row{border-top:0.5px solid var(--border,#d9d7cf)}",
+    ".bb-row .id{flex:none;font-weight:500;min-width:96px}.bb-row .tx{flex:1 1 200px;min-width:0}",
+    ".bb-st{flex:none;font-size:16px;padding:0 10px;border-radius:999px;background:var(--surface-1,#f6f5f1);color:var(--text-secondary,#5f5e5a)}",
+    ".bb-st.go{background:var(--bg-ok,#EAF3DE);color:var(--text-ok,#27500A)}",
+    ".bb-meta{margin-top:14px;border-radius:10px;background:var(--surface-1,#f6f5f1);padding:0 14px}",
+    ".bb-meta summary{cursor:pointer;font-size:16px;color:var(--text-secondary,#5f5e5a);padding:10px 0}",
+    ".bb-meta ul{margin:0;padding:0 0 10px 20px}.bb-meta li{font-size:16px;line-height:1.7}.bb-meta b{font-weight:500}",
     ".bb-flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;padding-top:6px}",
     ".bb-step{flex:1 1 130px;border:0.5px solid var(--border-strong,#c9c7bd);border-radius:10px;padding:10px 12px;background:var(--surface-1,#f6f5f1)}",
     ".bb-step .l{font-size:16px;font-weight:500;color:var(--text-secondary,#5f5e5a)}",
@@ -78,7 +88,7 @@
     ".bb-stage ul{margin:0;padding-left:20px}.bb-stage li{font-size:16px;line-height:1.7}",
     ".bb-stage img{display:block;max-width:100%;border-radius:8px;margin:0 auto}",
     ".bb-stage a{color:#9fd0ff}",
-    ".bb{--text-primary:var(--color-text-primary,#1c1c1a);--text-secondary:var(--color-text-secondary,#5f5e5a);--border:var(--color-border-tertiary,#d9d7cf);--border-strong:var(--color-border-secondary,#c9c7bd);--border-accent:var(--color-border-info,#378ADD);--bg-accent:var(--color-background-info,#E6F1FB);--surface-1:var(--color-background-secondary,#f6f5f1);--surface-2:var(--color-background-primary,#fff)}",
+    ".bb{--text-primary:var(--color-text-primary,#1c1c1a);--text-secondary:var(--color-text-secondary,#5f5e5a);--border:var(--color-border-tertiary,#d9d7cf);--border-strong:var(--color-border-secondary,#c9c7bd);--border-accent:var(--color-border-info,#378ADD);--bg-accent:var(--color-background-info,#E6F1FB);--bg-ok:var(--color-background-success,#EAF3DE);--text-ok:var(--color-text-success,#27500A);--surface-1:var(--color-background-secondary,#f6f5f1);--surface-2:var(--color-background-primary,#fff)}",
     ".bb-h{font-size:22px;font-weight:600;line-height:1.35;margin:0 0 10px}",
     ".bb-slip{position:relative;border-radius:12px;padding:14px 16px;background:var(--surface-1);border:0.5px solid var(--border);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 14px 14px -14px rgba(0,0,0,.35)}",
     ".bb-slip:before{content:'';position:absolute;inset:0;border-radius:12px;background:var(--bbg);opacity:.18;mix-blend-mode:soft-light;pointer-events:none}",
@@ -179,6 +189,29 @@
       into.appendChild(d);
     });
   }
+  // A titled list of short lines. A line is "text", "Label: text" or [label, text].
+  function lines(label, list, into) {
+    if (!list || !list.length) return;
+    var d = el("div", "bb-sec bb-fade"), ul = el("ul", "bb-ul");
+    d.appendChild(el("div", "l", label));
+    list.forEach(function (t) {
+      var li = el("li");
+      if (Object.prototype.toString.call(t) === "[object Array]") { li.appendChild(el("b", null, t[0] + ": ")); li.appendChild(document.createTextNode(t[1])); }
+      else li.appendChild(lead(t));
+      ul.appendChild(li);
+    });
+    d.appendChild(ul); into.appendChild(d);
+  }
+  // One roadmap-style row: an ID, a plain one-line meaning, and a state on the right.
+  // An item is {id, text, state} or [id, text, state]; only "Ready" is tinted.
+  function row(it) {
+    var a = Object.prototype.toString.call(it) === "[object Array]" ? { id: it[0], text: it[1], state: it[2] } : (it || {});
+    var r = el("div", "bb-row");
+    if (a.id) r.appendChild(el("span", "id", a.id));
+    r.appendChild(el("span", "tx", a.text));
+    if (a.state) r.appendChild(el("span", "bb-st" + (/^ready$/i.test(a.state) ? " go" : ""), a.state));
+    return r;
+  }
   function details(d, into) {
     if (!d || !d.items || !d.items.length) return;
     var box = el("details", "bb-det bb-sec"); box.style.paddingBottom = "0";
@@ -221,6 +254,30 @@
     });
     into.appendChild(box);
   }
+  function hero(p, card, report) {
+    // The hero art is a short muted clip of a cartoon dragon painted on a brick wall. With
+    // motion turned off, or if the clip cannot load, the same wall shows as a still picture.
+    var hero = el("div", "bb-hero"), art = el(still() ? "img" : "video", "bb-art"), alt = "A cartoon dragon in a red bucket hat, painted on a brick wall, nodding to a beat";
+    if (still()) { art.src = BASE + "dragon-poster.jpg"; art.alt = alt; report("dragon, still"); }
+    else {
+      art.muted = true; art.loop = true; art.autoplay = true; art.playsInline = true;
+      art.setAttribute("muted", ""); art.setAttribute("playsinline", ""); art.setAttribute("aria-label", alt);
+      art.poster = BASE + "dragon-poster.jpg"; art.src = BASE + "dragon-loop.mp4";
+      art.addEventListener("playing", function () { report("dragon, moving"); });
+      art.addEventListener("error", function () { report("dragon, no clip"); });
+    }
+    hero.appendChild(art); hero.appendChild(el("div", "bb-shade"));
+    var over = el("div", "bb-over"), top = el("div");
+    if (p.eyebrow) top.appendChild(el("div", "bb-eyebrow", p.eyebrow));
+    top.appendChild(el("div", "bb-title", p.title));
+    if (p.sub) top.appendChild(el("div", "bb-sub", p.sub));
+    over.appendChild(top);
+    if (p.status) {
+      var b = el("div", "bb-badge"), dot = el("span", "bb-dot live" + (p.status.tone === "warn" ? " warn" : p.status.tone === "bad" ? " bad" : ""));
+      b.appendChild(dot); b.appendChild(el("span", null, p.status.text)); over.appendChild(b);
+    }
+    hero.appendChild(over); card.appendChild(hero);
+  }
   function reveal(node) {
     var items = node.querySelectorAll(".bb-fade");
     Array.prototype.forEach.call(items, function (n, i) { setTimeout(function () { n.classList.add("in"); }, 120 + i * 90); });
@@ -229,31 +286,37 @@
   /* ---- layouts, one per kind of reply ---------------------------------------- */
   var LAYOUTS = {
     mission: function (p, card, report) {
-      // The hero art is a short muted clip of a cartoon dragon painted on a brick wall. With
-      // motion turned off, or if the clip cannot load, the same wall shows as a still picture.
-      var hero = el("div", "bb-hero"), art = el(still() ? "img" : "video", "bb-art"), alt = "A cartoon dragon in a red bucket hat, painted on a brick wall, nodding to a beat";
-      if (still()) { art.src = BASE + "dragon-poster.jpg"; art.alt = alt; report("dragon, still"); }
-      else {
-        art.muted = true; art.loop = true; art.autoplay = true; art.playsInline = true;
-        art.setAttribute("muted", ""); art.setAttribute("playsinline", ""); art.setAttribute("aria-label", alt);
-        art.poster = BASE + "dragon-poster.jpg"; art.src = BASE + "dragon-loop.mp4";
-        art.addEventListener("playing", function () { report("dragon, moving"); });
-        art.addEventListener("error", function () { report("dragon, no clip"); });
-      }
-      hero.appendChild(art); hero.appendChild(el("div", "bb-shade"));
-      var over = el("div", "bb-over"), top = el("div");
-      if (p.eyebrow) top.appendChild(el("div", "bb-eyebrow", p.eyebrow));
-      top.appendChild(el("div", "bb-title", p.title));
-      if (p.sub) top.appendChild(el("div", "bb-sub", p.sub));
-      over.appendChild(top);
-      if (p.status) {
-        var b = el("div", "bb-badge"), dot = el("span", "bb-dot live" + (p.status.tone === "warn" ? " warn" : p.status.tone === "bad" ? " bad" : ""));
-        b.appendChild(dot); b.appendChild(el("span", null, p.status.text)); over.appendChild(b);
-      }
-      hero.appendChild(over); card.appendChild(hero);
+      hero(p, card, report);
       var body = el("div", "bb-body");
       if (p.tiles) body.appendChild(tiles(p.tiles));
       sections(p.sections, body); details(p.details, body); question(p.question, body);
+      card.appendChild(body);
+    },
+    // The session-open brief. What the user steers by comes first: what the last session did,
+    // what is new, the two or three items that are next (the rest fold away), and any problem.
+    // Dates, sizes and health readouts sit in ONE small panel that opens on a click.
+    brief: function (p, card, report) {
+      hero(p, card, report);
+      var body = el("div", "bb-body");
+      lines("Last time", p.last, body);
+      lines("New", p.fresh, body);
+      if (p.next && p.next.length) {
+        var d = el("div", "bb-sec bb-fade"); d.appendChild(el("div", "l", "Next up"));
+        p.next.forEach(function (it) { d.appendChild(row(it)); });
+        if (p.more && p.more.length) {
+          var m = el("details", "bb-det"); m.appendChild(el("summary", null, p.moreLabel || p.more.length + " more open"));
+          p.more.forEach(function (it) { m.appendChild(row(it)); }); d.appendChild(m);
+        }
+        body.appendChild(d);
+      }
+      lines("Problems", p.problems, body);
+      if (p.meta && p.meta.line) {
+        var box = el("details", "bb-meta bb-fade"), ul = el("ul");
+        box.appendChild(el("summary", null, p.meta.line));
+        (p.meta.items || []).forEach(function (it) { var li = el("li"); li.appendChild(el("b", null, it[0] + ": ")); li.appendChild(document.createTextNode(it[1])); ul.appendChild(li); });
+        box.appendChild(ul); body.appendChild(box);
+      }
+      question(p.question, body);
       card.appendChild(body);
     },
     diagnosis: function (p, card) {
@@ -382,7 +445,8 @@
   // "moved" counts how often a user asked for a different shape, so the table can be tuned later.
   var PICK = {
     tiny: "line", did: "receipt", found: "answer", changed: "diff", broke: "diagnosis", choose: "columns",
-    status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken", told: "receipt"
+    status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken", told: "receipt",
+    open: "brief"
   };
   function pickForm(payload) {
     if (payload.kind && LAYOUTS[payload.kind]) return payload.kind;
