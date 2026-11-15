@@ -4,13 +4,13 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.10.0";
+  var VERSION = "0.11.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
   // i4 readout), one calm header scene and a border frame, under elements/<look>/ beside this
   // file. LOOK is the look of the card being drawn; it is set only while a layout runs.
-  var LOOKS = ["graffiti", "forest", "mech", "story"], LOOK = null;
+  var LOOKS = ["graffiti", "forest", "mech", "story"], LOOK = null, KIND = null;
 
   var CSS = [
     ".bb{font-family:inherit;color:var(--text-primary,#1c1c1a);border:0.5px solid var(--border,#d9d7cf);border-radius:14px;overflow:hidden;background:var(--surface-2,#fff)}",
@@ -46,13 +46,18 @@
     ".bb-meta{margin-top:14px;border-radius:10px;background:var(--surface-1,#f6f5f1);padding:0 14px}",
     ".bb-meta summary{cursor:pointer;font-size:16px;color:var(--text-secondary,#5f5e5a);padding:10px 0}",
     ".bb-meta ul{margin:0;padding:0 0 10px 20px}.bb-meta li{font-size:16px;line-height:1.7}.bb-meta b{font-weight:500}",
-    ".bb[data-bb-look],.bb.bb-bare[data-bb-look]{position:relative;overflow:hidden;background:var(--lk-bg);border:var(--lk-bw) solid transparent;border-image-slice:var(--lk-sl);border-image-width:var(--lk-bw);border-image-repeat:round;border-radius:6px;font-family:var(--lk-ff,inherit)}",
+    ".bb[data-bb-look],.bb.bb-bare[data-bb-look]{position:relative;overflow:hidden;background:var(--lk-bg);border:2px solid var(--lk-ol);border-top:7px solid var(--lk-st);border-radius:4px;font-family:var(--lk-ff,inherit)}",
     ".bb.bb-bare[data-bb-look]{padding:10px 12px 14px}",
     ".bb[data-bb-look]>*{position:relative}",
-    ".bb[data-bb-look=graffiti]{--lk-bg:#f6f5f2;--text-primary:#1c1c1a;--text-secondary:#55534e;--border:rgba(0,0,0,.12);--border-strong:rgba(0,0,0,.22);--surface-1:#eceae5;--surface-2:#fbfaf8;--bg-accent:#d9f1ee;--border-accent:#12a394;--bg-ok:#12b3a6;--text-ok:#06211f;--lk-sl:28;--lk-bw:12px}",
-    ".bb[data-bb-look=forest]{--lk-bg:#f1f5ea;--text-primary:#22301c;--text-secondary:#4d5c44;--border:rgba(40,70,20,.16);--border-strong:rgba(40,70,20,.3);--surface-1:#e4ebd8;--surface-2:#f9fbf4;--bg-accent:#dde8cc;--border-accent:#3f7d2c;--bg-ok:#3f7d2c;--text-ok:#fff;--lk-sl:56;--lk-bw:22px}",
-    ".bb[data-bb-look=mech]{--lk-bg:#161d28;--text-primary:#e8edf3;--text-secondary:#9fb0c3;--border:rgba(160,200,255,.16);--border-strong:rgba(160,200,255,.3);--surface-1:#212c3b;--surface-2:#0f1620;--bg-accent:#14344d;--border-accent:#4fb6ff;--bg-ok:#0b2a3d;--text-ok:#7fd6ff;--lk-sl:54;--lk-bw:18px;--lk-lf:ui-monospace,Consolas,monospace;--lk-so:.7}",
-    ".bb[data-bb-look=story]{--lk-bg:#fbf6ea;--text-primary:#4a3b2a;--text-secondary:#7a6851;--border:rgba(110,80,40,.2);--border-strong:rgba(110,80,40,.36);--surface-1:#f2e9d5;--surface-2:#fffaf0;--bg-accent:#f1e4c8;--border-accent:#b08a4a;--bg-ok:#f0d9b0;--text-ok:#5a4120;--lk-sl:78;--lk-bw:24px;--lk-ff:Georgia,'Times New Roman',serif;--lk-so:.9}",
+    ".bb[data-bb-look=graffiti]{--lk-bg:#f2f3f4;--text-primary:#141414;--text-secondary:#4a4e54;--border:rgba(20,20,20,.14);--border-strong:rgba(20,20,20,.3);--surface-1:#e3e6e9;--surface-2:#fafbfb;--bg-accent:#d3f0ec;--border-accent:#1b9e92;--bg-ok:#1b9e92;--text-ok:#fff;--lk-ol:#141414;--lk-st:#2d5fc4;--lk-hbg:#1b1512;--lk-htx:#fff}",
+    ".bb[data-bb-look=graffiti] .bb-sec .l{font-weight:500;letter-spacing:.01em}",
+    ".bb-lh.gd{min-height:150px;background:var(--lk-hbg)}.bb-lh.gd .ti,.bb-lh.gd .sb,.bb-lh.gd .st{color:var(--lk-htx)}",
+    ".bb-lh.gd .bb-gd{position:absolute;right:0;top:0;height:100%;aspect-ratio:3/2;object-fit:cover;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 30%);mask-image:linear-gradient(90deg,transparent 0,#000 30%)}",
+    "@media (max-width:520px){.bb-lh.gd .bb-gd{opacity:.45}.bb-lh.gd .ti,.bb-lh.gd .sb,.bb-lh.gd .st{text-shadow:0 1px 3px var(--lk-hbg)}}",
+    ".bb[data-bb-look=graffiti] img.bb-scene:not(.hd){position:absolute;right:0;top:0;width:46%;height:110px;object-fit:cover;object-position:60% 40%;opacity:.55;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 55%),linear-gradient(180deg,#000 40%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent 0,#000 55%),linear-gradient(180deg,#000 40%,transparent 100%);mask-composite:intersect}",
+    ".bb[data-bb-look=forest]{--lk-bg:#f1f5ea;--text-primary:#22301c;--text-secondary:#4d5c44;--border:rgba(40,70,20,.16);--border-strong:rgba(40,70,20,.3);--surface-1:#e4ebd8;--surface-2:#f9fbf4;--bg-accent:#dde8cc;--border-accent:#3f7d2c;--bg-ok:#3f7d2c;--text-ok:#fff;--lk-ol:#22301c;--lk-st:#4f7d2c;--lk-hbg:#18200f;--lk-htx:#fff}",
+    ".bb[data-bb-look=mech]{--lk-bg:#161d28;--text-primary:#e8edf3;--text-secondary:#9fb0c3;--border:rgba(160,200,255,.16);--border-strong:rgba(160,200,255,.3);--surface-1:#212c3b;--surface-2:#0f1620;--bg-accent:#14344d;--border-accent:#4fb6ff;--bg-ok:#0b2a3d;--text-ok:#7fd6ff;--lk-ol:#05080d;--lk-st:#4fb6ff;--lk-hbg:#070b12;--lk-htx:#fff;--lk-lf:ui-monospace,Consolas,monospace;--lk-so:.7}",
+    ".bb[data-bb-look=story]{--lk-bg:#fbf6ea;--text-primary:#4a3b2a;--text-secondary:#7a6851;--border:rgba(110,80,40,.2);--border-strong:rgba(110,80,40,.36);--surface-1:#f2e9d5;--surface-2:#fffaf0;--bg-accent:#f1e4c8;--border-accent:#b08a4a;--bg-ok:#f0d9b0;--text-ok:#5a4120;--lk-ol:#4a3b2a;--lk-st:#b08a4a;--lk-hbg:#f6efdf;--lk-htx:#3a2d1f;--lk-ff:Georgia,'Times New Roman',serif;--lk-so:.9}",
     ".bb img.bb-scene{position:absolute;right:0;top:0;width:58%;height:88px;object-fit:cover;object-position:70% 55%;opacity:.45;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 60%),linear-gradient(180deg,#000 35%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent 0,#000 60%),linear-gradient(180deg,#000 35%,transparent 100%);mask-composite:intersect}",
     ".bb img.bb-scene.hd{height:100%;opacity:var(--lk-so,.8);-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 55%);mask-image:linear-gradient(90deg,transparent 0,#000 55%)}",
     ".bb-lh{position:relative;min-height:96px;display:flex;align-items:center;padding:6px 10px;overflow:hidden}",
@@ -217,6 +222,13 @@
     });
   }
   // A look's picture: a category picture (i1..i4), or its header scene.
+  function dragon(cls) {
+    var still_ = still(), v = el(still_ ? "img" : "video", cls);
+    if (still_) { v.src = BASE + "dragon-poster.jpg"; v.alt = ""; return v; }
+    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+    v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("aria-hidden", "true");
+    v.poster = BASE + "dragon-poster.jpg"; v.src = BASE + "dragon-loop.mp4"; return v;
+  }
   function pic(name, cls, look) {
     var i = el("img", cls || "bb-ic"); i.src = BASE + "elements/" + (look || LOOK) + "/" + name + ".webp"; i.alt = ""; return i;
   }
@@ -230,8 +242,10 @@
   }
   // A look's header: the title and status on the left, the calm scene fading in from the right.
   function lookHead(p, card, look) {
-    var h = el("div", "bb-lh"), d = el("div");
-    h.appendChild(pic("scene", "bb-scene hd", look));
+    // A look's hero character belongs in big headers only - the opening, the close and a
+    // status - never behind body text. Graffiti's hero is the moving dragon.
+    var lk = look || LOOK, gd = KIND === "brief" || KIND === "close" || KIND === "mission", h = el("div", "bb-lh" + (gd ? " gd" : "")), d = el("div");
+    h.appendChild(!gd ? pic("scene", "bb-scene hd", look) : lk === "graffiti" ? dragon("bb-gd") : pic("hero", "bb-gd", lk));
     d.appendChild(el("div", "ti", p.title));
     if (p.sub) d.appendChild(el("div", "sb", p.sub));
     if (p.status) {
@@ -349,6 +363,25 @@
     // The session-open brief. What the user steers by comes first: what the last session did,
     // what is new, the two or three items that are next (the rest fold away), and any problem.
     // Dates, sizes and health readouts sit in ONE small panel that opens on a click.
+    // A session close: what this session did and what happens next time. Counts are
+    // readouts, so they fold away under the line that says whether the save landed.
+    close: function (p, card, report) {
+      hero(p, card, report);
+      var body = el("div", "bb-body");
+      lines("What we did", p.did, body, "i1");
+      lines("Next time", p.next, body, "i2");
+      lines("Left open", p.open, body, "i3");
+      if (p.meta && p.meta.line) {
+        var box = el("details", "bb-meta bb-fade"), ul = el("ul");
+        box.appendChild(el("summary", null, p.meta.line));
+        (p.meta.items || []).forEach(function (it) { var li = el("li"); li.appendChild(el("b", null, it[0] + ": ")); li.appendChild(document.createTextNode(it[1])); ul.appendChild(li); });
+        box.appendChild(ul);
+        if (LOOK) { var ms = el("div", "bb-sec"); ms.appendChild(beside("i4", box)); body.appendChild(ms); }
+        else body.appendChild(box);
+      }
+      question(p.question, body);
+      card.appendChild(body);
+    },
     brief: function (p, card, report) {
       hero(p, card, report);
       var body = el("div", "bb-body");
@@ -519,7 +552,7 @@
   var PICK = {
     tiny: "line", did: "receipt", found: "answer", changed: "diff", broke: "diagnosis", choose: "columns",
     status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken", told: "receipt",
-    open: "brief", themes: "themes"
+    open: "brief", close: "close", themes: "themes"
   };
   function pickForm(payload) {
     if (payload.kind && LAYOUTS[payload.kind]) return payload.kind;
@@ -542,10 +575,9 @@
     var s = document.createElement("script"); s.id = "bb-themes"; s.src = BASE + "themes.js"; document.head.appendChild(s);
   }
 
-  // Put a look on a card: its colours and type come from the stylesheet, its frame from here.
+  // Put a look on a card: its colours, border and type all come from the stylesheet.
   function dress(card, look) {
     card.setAttribute("data-bb-look", look);
-    card.style.borderImageSource = "url(" + BASE + "elements/" + look + "/frame.webp)";
   }
   function render(target, payload) {
     css();
@@ -557,11 +589,11 @@
     var state = el("span"); state.className = "sr-only";
     var look = LOOKS.indexOf(payload.theme) >= 0 ? payload.theme : null;
     if (look) dress(card, look);
-    LOOK = look;
+    LOOK = look; KIND = kind;
     try { LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); }); }
-    finally { LOOK = null; }
+    finally { LOOK = null; KIND = null; }
     // Forms with no header of their own get the scene as a faint corner; one-liners get none.
-    if (look && ["mission", "brief", "themes", "line", "note"].indexOf(kind) < 0) card.insertBefore(pic("scene", "bb-scene", look), card.firstChild);
+    if (look && ["mission", "brief", "close", "themes", "line", "note"].indexOf(kind) < 0) card.insertBefore(pic("scene", "bb-scene", look), card.firstChild);
     host.appendChild(card);
     if (!look) applyTheme(payload.theme, card);
     if (look) host.setAttribute("data-bb-look", look);
