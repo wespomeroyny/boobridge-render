@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.12.1";
+  var VERSION = "0.12.2";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
@@ -657,12 +657,43 @@
   // unexpected shape (table rows sent as objects) threw halfway through drawing, after the
   // fallback line had been cleared, and the user saw an empty box. Any error now draws the
   // incomplete card instead, with the fallback line and every word the payload carried.
+  // 0.12.2 (2026-11-16): a payload that is not valid JSON never reaches the user as raw
+  // JSON in a warning box. The loader hands it over as {exchange: "unreadable", text}; it
+  // is repaired when the slip is a bracket (one closing brace too many, one missing, a
+  // trailing comma), and otherwise drawn as a plain card from the fallback line.
+  function balance(t) {
+    var out = "", stack = [], inStr = false, esc = false;
+    for (var i = 0; i < t.length; i++) {
+      var ch = t.charAt(i);
+      if (inStr) { out += ch; if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+      if (ch === '"') { inStr = true; out += ch; continue; }
+      if (ch === "{" || ch === "[") { stack.push(ch === "{" ? "}" : "]"); out += ch; continue; }
+      if (ch === "}" || ch === "]") { if (stack.length && stack[stack.length - 1] === ch) { stack.pop(); out += ch; } continue; }
+      out += ch;
+    }
+    if (inStr) out += '"';
+    while (stack.length) out += stack.pop();
+    return out;
+  }
+  function salvage(t) {
+    if (typeof t !== "string") return null;
+    var s = t.trim(), tries = [s, balance(s), balance(s.replace(/,\s*([}\]])/g, "$1"))];
+    for (var i = 0; i < tries.length; i++) {
+      try { var v = JSON.parse(tries[i]); if (v && typeof v === "object" && !Array.isArray(v)) return v; } catch (e) {}
+    }
+    return null;
+  }
   function render(target, payload) {
     css();
     var host = typeof target === "string" ? document.querySelector(target) : target;
     if (!host) return;
     var orig = (host.textContent || "").trim();
     payload = payload || {};
+    if (payload.exchange === "unreadable") {
+      var fixed = salvage(payload.text);
+      var look = (String(payload.text || "").match(/"theme"\s*:\s*"(\w+)"/) || [])[1];
+      payload = fixed || { exchange: "found", answer: orig || "This reply's card could not be read.", theme: look };
+    }
     try { draw(host, payload, orig); }
     catch (e) {
       try {
