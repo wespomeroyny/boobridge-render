@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.11.0";
+  var VERSION = "0.12.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
@@ -110,6 +110,12 @@
     ".bb-sheet p{margin:0 0 10px;position:relative;font-size:18px;line-height:1.6;white-space:pre-line}.bb-sheet p:last-child{margin-bottom:0}",
     ".bb-sheet .to{font-size:16px;color:#6a675f;border-bottom:1px solid #e3e0d6;padding-bottom:8px}",
     ".bb-check{margin:12px 0 0;font-size:16px;color:var(--text-secondary,#5f5e5a);text-align:center}",
+    ".bb-miss{display:flex;align-items:center;justify-content:center;text-align:center;min-height:72px;padding:12px 14px;margin:6px 0;border:1.5px dashed #E24B4A;border-radius:10px;color:#a12524;background:rgba(226,75,74,.06);font-size:16px;line-height:1.45}",
+    ".bb-warn{padding:16px 20px;border-left:4px solid #E24B4A}",
+    ".bb-warn .h{font-size:18px;font-weight:500;margin:0 0 6px}",
+    ".bb-warn ul{margin:0 0 10px;padding-left:20px}.bb-warn li{margin:2px 0}",
+    ".bb-warn .k{font-size:16px;color:var(--text-secondary,#5f5e5a);margin:10px 0 4px}",
+    ".bb-warn .v{white-space:pre-wrap;margin:0 0 8px}",
     ".bb-cap{font-size:19px;font-weight:600;margin:0 0 10px}",
     ".bb-stage{border-radius:16px;padding:16px;position:relative;overflow:hidden;background:linear-gradient(180deg,#1b2430,#0e141c);color:#eef2f6;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 0 1px rgba(255,255,255,.06),0 18px 16px -16px rgba(0,0,0,.5)}",
     ".bb-stage:before{content:'';position:absolute;inset:0;background:radial-gradient(120% 70% at 20% -10%,rgba(140,190,255,.28),transparent 60%),var(--bbg);opacity:.8;mix-blend-mode:soft-light;pointer-events:none}",
@@ -298,6 +304,74 @@
     [MARK + '<path d="M10 10.2a3 3 0 1 1 4.6 2.5c-1 .7-1.6 1.2-1.6 2.5"/><path d="M13 18.6v.1"/></svg>', "more", "More about this question"],
     [MARK + '<path d="M13 8v10M8 13h10"/></svg>', "pros", "Reasons to do it"],
     [MARK + '<path d="M8 13h10"/></svg>', "risks", "Risks"]];
+  // 0.12.0 (2026-11-16): a picture that cannot be shown says so. Before this, an image whose
+  // address was not https:// or data:image (a file path, a picture too big to carry) was
+  // skipped without a word, and a pane with no text came out as an empty box.
+  function picture(im, into) {
+    var src = im && im.src || "";
+    if (!/^(https:\/\/|data:image\/)/.test(src)) {
+      into.appendChild(el("div", "bb-miss", "Picture missing: " + (src ? "it was given as " + (/^(file:|[a-zA-Z]:\\|\/)/.test(src) ? "a file path" : "an address") + " the card cannot open." : "no picture was carried in the card.")));
+      return false;
+    }
+    var g = el("img"); g.src = src; g.alt = im.alt || ""; g.loading = "lazy";
+    g.onerror = function () { var m = el("div", "bb-miss", "Picture did not load: the picture text in the card is broken or cut short."); if (g.parentNode) g.parentNode.replaceChild(m, g); };
+    into.appendChild(g);
+    return true;
+  }
+
+  // What each form cannot be drawn without. A payload missing one is shown as an
+  // "incomplete" card that names what is missing and keeps every word it carried, instead
+  // of an empty box (2026-11-16: a draft sent without `body` drew a blank sheet).
+  function has(x) { return Array.isArray(x) ? x.length > 0 : !!(x && String(x).trim()); }
+  function paneOk(d) { return d && (has(d.text) || (d.image && has(d.image.src))); }
+  var NEEDS = {
+    line: function (p) { return has(p.text) ? [] : ["`text`: the one line to show"]; },
+    note: function (p) { return has(p.text) ? [] : ["`text`: what to say"]; },
+    receipt: function (p) { return has(p.result) ? [] : ["`result`: the outcome in one line"]; },
+    answer: function (p) { return has(p.answer) ? [] : ["`answer`: the answer itself"]; },
+    diff: function (p) { var w = []; if (!paneOk(p.before)) w.push("`before`: text or a picture"); if (!paneOk(p.after)) w.push("`after`: text or a picture"); return w; },
+    diagnosis: function (p) { return has(p.flow) ? [] : ["`flow`: the steps from what was seen to the fix"]; },
+    columns: function (p) { return has(p.options) ? [] : ["`options`: the choices side by side"]; },
+    mission: function (p) { return has(p.title) ? [] : ["`title`: where things stand"]; },
+    stage: function (p) { return has(p.bars) || has(p.items) || (p.image && has(p.image.src)) ? [] : ["`bars`, `items` or `image`: the thing to show"]; },
+    draft: function (p) { return has(p.body) ? [] : ["`body`: the text to send"]; },
+    prose: function (p) { return has(p.paras) ? [] : ["`paras`: the paragraphs"]; },
+    spoken: function (p) { return has(p.lines) ? [] : ["`lines`: the sentences to say"]; },
+    brief: function (p) { return has(p.last) || has(p.fresh) || has(p.next) ? [] : ["`last`, `fresh` or `next`: what the catch up says"]; },
+    close: function (p) { return has(p.did) || has(p.next) ? [] : ["`did` or `next`: what the session did or what comes next"]; }
+  };
+  function missing(kind, p) {
+    var w = NEEDS[kind] ? NEEDS[kind](p) : [];
+    if (p.exchange && !PICK[p.exchange] && !(p.kind && LAYOUTS[p.kind])) w.unshift("`exchange`: \"" + p.exchange + "\" is not a kind of reply this renderer knows");
+    if (p.question && !has(p.question.q)) w.push("`question.q`: the question to ask");
+    return w;
+  }
+  function carried(p, orig) {
+    var out = [], seen = {};
+    (function walk(x, key) {
+      if (x == null) return;
+      if (typeof x === "string") {
+        if (/^(exchange|theme|kind|tone|state|src|id|url)$/.test(key) || /^data:/.test(x)) return;
+        var t = x.trim(); if (t && !seen[t]) { seen[t] = 1; out.push(t); } return;
+      }
+      if (typeof x === "number") return;
+      if (Array.isArray(x)) { x.forEach(function (v) { walk(v, key); }); return; }
+      if (typeof x === "object") for (var k in x) if (k !== "question") walk(x[k], k);
+    })(p, "");
+    if (orig && !seen[orig]) out.unshift(orig);
+    return out;
+  }
+  function incomplete(p, card, why, orig) {
+    var w = el("div", "bb-warn");
+    w.appendChild(el("p", "h", "This card is missing a part, so it shows everything it carried instead"));
+    var ul = el("ul"); why.forEach(function (t) { ul.appendChild(el("li", null, "Missing " + t.replace(/`/g, ""))); }); w.appendChild(ul);
+    var got = carried(p, orig);
+    if (got.length) { w.appendChild(el("p", "k", "What the reply carried:")); got.forEach(function (t) { w.appendChild(el("p", "v", t)); }); }
+    else w.appendChild(el("p", "k", "The reply carried no text at all."));
+    card.appendChild(w);
+    if (p.question && has(p.question.q)) question(p.question, card);
+  }
+
   function question(q, into) {
     if (!q) return;
     var box = el("div", "bb-q bb-fade"), head = el("div", "qh"), aids = el("div", "bb-aids"), tips = [], pinned = -1;
@@ -447,7 +521,7 @@
         });
       }
       if (p.items && p.items.length) { var ul = el("ul"); p.items.forEach(function (t) { ul.appendChild(el("li", null, t)); }); st.appendChild(ul); }
-      if (p.image && /^(https:\/\/|data:image\/)/.test(p.image.src || "")) { var im = el("img"); im.src = p.image.src; im.alt = p.image.alt || ""; im.loading = "lazy"; st.appendChild(im); }
+      if (p.image) picture(p.image, st);
       if (p.link && /^https:\/\//.test(p.link.url || "")) { var a = el("a", null, p.link.text || "Open full size"); a.href = p.link.url; a.target = "_blank"; a.rel = "noopener"; var w = el("div"); w.style.marginTop = "10px"; w.appendChild(a); st.appendChild(w); }
       card.appendChild(st);
       if (p.note) card.appendChild(el("p", "bb-check", p.note));
@@ -484,7 +558,7 @@
       function pane(cls, d, fallback) {
         var n = el("div", "bb-pane " + cls); n.appendChild(el("div", "l", (d && d.label) || fallback));
         var im = d && d.image;
-        if (im && /^(https:\/\/|data:image\/)/.test(im.src || "")) { var g = el("img"); g.src = im.src; g.alt = im.alt || ""; g.loading = "lazy"; n.appendChild(g); n.classList.add("pic"); }
+        if (im) { picture(im, n); n.classList.add("pic"); }
         var text = String((d && d.text) || ""), mk = cls === "new" && p.changed ? text.indexOf(p.changed) : -1;
         if (!text) return n;
         if (n.classList.contains("pic")) { var cap = el("div", "cap"); n.appendChild(cap); var keep = n; n = cap; var done = function () { return keep; }; }
@@ -583,9 +657,18 @@
     css();
     var host = typeof target === "string" ? document.querySelector(target) : target;
     if (!host) return;
+    var orig = (host.textContent || "").trim();
     host.textContent = "";
     var card = el("div", "bb");
     var kind = pickForm(payload);
+    var why = missing(kind, payload);
+    if (why.length) {
+      card.classList.add("bb-bare");
+      incomplete(payload, card, why, orig);
+      host.appendChild(card);
+      host.setAttribute("data-bb", VERSION + ":incomplete");
+      return;
+    }
     var state = el("span"); state.className = "sr-only";
     var look = LOOKS.indexOf(payload.theme) >= 0 ? payload.theme : null;
     if (look) dress(card, look);
