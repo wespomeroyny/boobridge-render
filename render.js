@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.12.0";
+  var VERSION = "0.12.1";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
@@ -544,7 +544,7 @@
       if (p.table && p.table.rows && p.table.rows.length) {
         var tb = el("table", "bb-tbl");
         if (p.table.head) { var hr = el("tr"); p.table.head.forEach(function (h) { hr.appendChild(el("th", null, h)); }); tb.appendChild(hr); }
-        p.table.rows.forEach(function (row) { var tr = el("tr"); row.forEach(function (c) { tr.appendChild(el("td", null, c)); }); tb.appendChild(tr); });
+        p.table.rows.forEach(function (row) { var tr = el("tr"); (Array.isArray(row) ? row : row && typeof row === "object" ? Object.keys(row).map(function (k) { return row[k]; }) : [row]).forEach(function (c) { tr.appendChild(el("td", null, c)); }); tb.appendChild(tr); });
         card.appendChild(tb);
       }
       var src = (p.sources || []).filter(function (x) { return /^https:\/\//.test(x.url || ""); });
@@ -653,11 +653,28 @@
   function dress(card, look) {
     card.setAttribute("data-bb-look", look);
   }
+  // 0.12.1 (2026-11-16): nothing a payload carries can leave the card blank. A field in an
+  // unexpected shape (table rows sent as objects) threw halfway through drawing, after the
+  // fallback line had been cleared, and the user saw an empty box. Any error now draws the
+  // incomplete card instead, with the fallback line and every word the payload carried.
   function render(target, payload) {
     css();
     var host = typeof target === "string" ? document.querySelector(target) : target;
     if (!host) return;
     var orig = (host.textContent || "").trim();
+    payload = payload || {};
+    try { draw(host, payload, orig); }
+    catch (e) {
+      try {
+        host.textContent = "";
+        var card = el("div", "bb bb-bare");
+        incomplete(payload, card, ["a shape the renderer can draw (it stopped on: " + String(e && e.message || e) + ")"], orig);
+        host.appendChild(card);
+        host.setAttribute("data-bb", VERSION + ":error");
+      } catch (e2) { host.textContent = orig || "This reply's card could not be drawn."; }
+    }
+  }
+  function draw(host, payload, orig) {
     host.textContent = "";
     var card = el("div", "bb");
     var kind = pickForm(payload);
