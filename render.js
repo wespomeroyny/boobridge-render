@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.12.2";
+  var VERSION = "0.13.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
@@ -342,7 +342,6 @@
   };
   function missing(kind, p) {
     var w = NEEDS[kind] ? NEEDS[kind](p) : [];
-    if (p.exchange && !PICK[p.exchange] && !(p.kind && LAYOUTS[p.kind])) w.unshift("`exchange`: \"" + p.exchange + "\" is not a kind of reply this renderer knows");
     if (p.question && !has(p.question.q)) w.push("`question.q`: the question to ask");
     return w;
   }
@@ -628,6 +627,19 @@
     status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken", told: "receipt",
     open: "brief", close: "close", themes: "themes"
   };
+  // 0.13.0 (2026-11-18): an exchange name that is not in PICK no longer draws a warning card.
+  // A LinkedIn close sent "ask" and got the red box with no question panel. A made-up name is
+  // drawn as the first structured form whose needs its fields meet; anything else becomes an
+  // answer card carrying every word in order, with the question panel kept.
+  var GUESS = ["columns", "diagnosis", "diff", "draft", "stage"];
+  function made_up(p) { return p.exchange && !PICK[p.exchange] && !(p.kind && LAYOUTS[p.kind]); }
+  function guess(p) {
+    for (var i = 0; i < GUESS.length; i++) if (!NEEDS[GUESS[i]](p).length) return Object.assign({}, p, { kind: GUESS[i] });
+    var rest = {};
+    for (var k in p) if (!/^(details|table|sources|question|exchange|theme|kind)$/.test(k)) rest[k] = p[k];
+    var words = carried(rest, "");
+    return { exchange: "found", theme: p.theme, answer: words[0] || "", points: words.slice(1), table: p.table, sources: p.sources, details: p.details, question: p.question };
+  }
   function pickForm(payload) {
     if (payload.kind && LAYOUTS[payload.kind]) return payload.kind;
     var f = PICK[payload.exchange];
@@ -708,6 +720,8 @@
   function draw(host, payload, orig) {
     host.textContent = "";
     var card = el("div", "bb");
+    var guessed = made_up(payload);
+    if (guessed) payload = guess(payload);
     var kind = pickForm(payload);
     var why = missing(kind, payload);
     if (why.length) {
@@ -728,7 +742,7 @@
     host.appendChild(card);
     if (!look) applyTheme(payload.theme, card);
     if (look) host.setAttribute("data-bb-look", look);
-    host.setAttribute("data-bb", VERSION + ":" + kind);
+    host.setAttribute("data-bb", VERSION + ":" + kind + (guessed ? ":guessed" : ""));
     reveal(card);
   }
 
