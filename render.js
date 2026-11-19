@@ -1,165 +1,115 @@
 /* BooBridge render - turns a short payload into a finished inline reply.
-   The model sends { kind, title, ... }. This script picks the layout for that kind,
-   applies the theme, and draws it. Text colours come from the host page's own
-   variables, so light and dark both work. */
+   The model sends { exchange, ... }. This script picks the form for that exchange, applies
+   the look, and draws it. Colours come from the host page's own variables, so light and
+   dark both work.
+   0.15.0 (2026-11-19): one quiet layout for every form. Three type sizes only (26, 18, 16),
+   the headline is the finding, every short row is one line, the question sits last in its
+   own panel. A look is one photo fading in behind the header, an accent colour and a faint
+   tint on the question panel - nothing in the body. A look may also have a hero (a moving
+   clip with a still frame) that takes the photo's place on the open and close cards only. */
 (function (root) {
   "use strict";
-  var VERSION = "0.14.0";
+  var VERSION = "0.15.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
-  var THEMES = {}, WAIT = [];
-  // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
-  // i4 readout), one calm header scene and a border frame, under elements/<look>/ beside this
-  // file. LOOK is the look of the card being drawn; it is set only while a layout runs.
+  var THEMES = {};
+  // Looks. Each has elements/<look>/corner.webp beside this file. A look listed in HEROES
+  // also has a hero for the open and close cards; any look can get one later by adding a line.
   var LOOKS = ["graffiti", "forest", "mech", "story"], LOOK = null, KIND = null;
+  var HEROES = {
+    graffiti: { clip: "dragon-loop.mp4", still: "dragon-poster.jpg", alt: "A cartoon dragon in a red bucket hat, painted on a brick wall, nodding to a beat", focus: "50% 18%" }
+  };
+  var HERO_FORMS = ["brief", "close"];
+  // How long each kind of slot may be before it stops fitting on one line at 680 pixels.
+  // The renderer never cuts text: a slot over its limit wraps cleanly and is marked
+  // data-bb-long, which the gallery check fails on, so payload writers see it.
+  var LIMIT = { h1: 64, line: 76, choice: 52, cell: 20, chip: 28 };
 
   var CSS = [
-    ".bb{font-family:inherit;color:var(--text-primary,#1c1c1a);border:0.5px solid var(--border,#d9d7cf);border-radius:14px;overflow:hidden;background:var(--surface-2,#fff)}",
-    ".bb *{box-sizing:border-box}",
-    ".bb-hero{position:relative;height:270px;background:#140f0d;color:#fff;overflow:hidden}",
-    ".bb-hero .bb-art{position:absolute;right:0;top:0;height:100%;aspect-ratio:3/2;object-fit:cover;display:block}",
-    ".bb-hero .bb-shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,7,15,.92) 0%,rgba(5,7,15,.55) 42%,rgba(5,7,15,0) 70%)}",
-    ".bb-hero .bb-over{position:absolute;left:22px;right:22px;top:20px;bottom:18px;display:flex;flex-direction:column;justify-content:space-between}",
-    ".bb-eyebrow{font-size:16px;letter-spacing:.08em;color:#9fb4e8}",
-    ".bb-title{font-size:30px;font-weight:500;line-height:1.2;margin:6px 0 0;max-width:62%;color:#fff}",
-    ".bb-sub{font-size:16px;color:#d5def5;margin-top:8px;max-width:58%;line-height:1.5}",
-    ".bb-badge{display:inline-flex;align-items:center;gap:8px;font-size:16px;padding:5px 11px;border-radius:999px;background:rgba(255,255,255,.12);border:0.5px solid rgba(255,255,255,.45);color:#fff;align-self:flex-start}",
-    ".bb-dot{width:8px;height:8px;border-radius:50%;background:#5DCAA5}",
-    ".bb-dot.warn{background:#EF9F27}.bb-dot.bad{background:#E24B4A}",
-    "@keyframes bbpulse{0%{box-shadow:0 0 0 0 rgba(93,202,165,.7)}100%{box-shadow:0 0 0 9px rgba(93,202,165,0)}}",
-    ".bb-dot.live{animation:bbpulse 1.8s infinite}",
-    ".bb-body{padding:4px 22px 18px}",
-    ".bb-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;padding:16px 0 4px}",
-    ".bb-tile{background:var(--surface-1,#f6f5f1);border-radius:10px;padding:12px 14px}",
-    ".bb-tile .k{font-size:16px;font-weight:500;color:var(--text-secondary,#5f5e5a)}",
-    ".bb-tile .v{font-size:28px;font-weight:500;line-height:1.3;font-variant-numeric:tabular-nums}",
-    ".bb-tile .n{font-size:16px;color:var(--text-secondary,#5f5e5a);line-height:1.4}",
-    ".bb-sec{border-top:0.5px solid var(--border-strong,#c9c7bd);padding:14px 0 12px;margin-top:12px}",
-    ".bb-sec .l{font-size:18px;font-weight:500;margin-bottom:4px}",
-    ".bb-sec .t{font-size:16px;line-height:1.6}",
-    ".bb-body>.bb-sec:first-child{border-top:0;margin-top:0}",
-    ".bb-ul{margin:0;padding-left:20px}.bb-ul li{font-size:16px;line-height:1.6;margin:2px 0}.bb-ul b{font-weight:500}",
-    ".bb-row{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;padding:7px 0;font-size:16px;line-height:1.5}",
-    ".bb-row+.bb-row{border-top:0.5px solid var(--border,#d9d7cf)}",
-    ".bb-row .id{flex:none;font-weight:500;min-width:96px}.bb-row .tx{flex:1 1 200px;min-width:0}",
-    ".bb-st{flex:none;font-size:16px;padding:0 10px;border-radius:999px;background:var(--surface-1,#f6f5f1);color:var(--text-secondary,#5f5e5a)}",
-    ".bb-st.go{background:var(--bg-ok,#EAF3DE);color:var(--text-ok,#27500A)}",
-    ".bb-meta{margin-top:14px;border-radius:10px;background:var(--surface-1,#f6f5f1);padding:0 14px}",
-    ".bb-meta summary{cursor:pointer;font-size:16px;color:var(--text-secondary,#5f5e5a);padding:10px 0}",
-    ".bb-meta ul{margin:0;padding:0 0 10px 20px}.bb-meta li{font-size:16px;line-height:1.7}.bb-meta b{font-weight:500}",
-    ".bb[data-bb-look],.bb.bb-bare[data-bb-look]{position:relative;overflow:hidden;background:var(--lk-bg);border:2px solid var(--lk-ol);border-top:7px solid var(--lk-st);border-radius:4px;font-family:var(--lk-ff,inherit)}",
-    ".bb.bb-bare[data-bb-look]{padding:10px 12px 14px}",
-    ".bb[data-bb-look]>*{position:relative}",
-    ".bb[data-bb-look=graffiti]{--lk-bg:#f2f3f4;--text-primary:#141414;--text-secondary:#4a4e54;--border:rgba(20,20,20,.14);--border-strong:rgba(20,20,20,.3);--surface-1:#e3e6e9;--surface-2:#fafbfb;--bg-accent:#d3f0ec;--border-accent:#1b9e92;--bg-ok:#1b9e92;--text-ok:#fff;--lk-ol:#141414;--lk-st:#2d5fc4;--lk-hbg:#1b1512;--lk-htx:#fff}",
-    ".bb[data-bb-look=graffiti] .bb-sec .l{font-weight:500;letter-spacing:.01em}",
-    ".bb-lh.gd{min-height:150px;background:var(--lk-hbg)}.bb-lh.gd .ti,.bb-lh.gd .sb,.bb-lh.gd .st{color:var(--lk-htx)}",
-    ".bb-lh.gd .bb-gd{position:absolute;right:0;top:0;height:100%;aspect-ratio:3/2;object-fit:cover;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 30%);mask-image:linear-gradient(90deg,transparent 0,#000 30%)}",
-    "@media (max-width:520px){.bb-lh.gd .bb-gd{opacity:.45}.bb-lh.gd .ti,.bb-lh.gd .sb,.bb-lh.gd .st{text-shadow:0 1px 3px var(--lk-hbg)}}",
-    ".bb[data-bb-look=graffiti] img.bb-scene:not(.hd){position:absolute;right:0;top:0;width:46%;height:110px;object-fit:cover;object-position:60% 40%;opacity:.55;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 55%),linear-gradient(180deg,#000 40%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent 0,#000 55%),linear-gradient(180deg,#000 40%,transparent 100%);mask-composite:intersect}",
-    ".bb[data-bb-look=forest]{--lk-bg:#f1f5ea;--text-primary:#22301c;--text-secondary:#4d5c44;--border:rgba(40,70,20,.16);--border-strong:rgba(40,70,20,.3);--surface-1:#e4ebd8;--surface-2:#f9fbf4;--bg-accent:#dde8cc;--border-accent:#3f7d2c;--bg-ok:#3f7d2c;--text-ok:#fff;--lk-ol:#22301c;--lk-st:#4f7d2c;--lk-hbg:#18200f;--lk-htx:#fff}",
-    ".bb[data-bb-look=mech]{--lk-bg:#161d28;--text-primary:#e8edf3;--text-secondary:#9fb0c3;--border:rgba(160,200,255,.16);--border-strong:rgba(160,200,255,.3);--surface-1:#212c3b;--surface-2:#0f1620;--bg-accent:#14344d;--border-accent:#4fb6ff;--bg-ok:#0b2a3d;--text-ok:#7fd6ff;--lk-ol:#05080d;--lk-st:#4fb6ff;--lk-hbg:#070b12;--lk-htx:#fff;--lk-lf:ui-monospace,Consolas,monospace;--lk-so:.7}",
-    ".bb[data-bb-look=story]{--lk-bg:#fbf6ea;--text-primary:#4a3b2a;--text-secondary:#7a6851;--border:rgba(110,80,40,.2);--border-strong:rgba(110,80,40,.36);--surface-1:#f2e9d5;--surface-2:#fffaf0;--bg-accent:#f1e4c8;--border-accent:#b08a4a;--bg-ok:#f0d9b0;--text-ok:#5a4120;--lk-ol:#4a3b2a;--lk-st:#b08a4a;--lk-hbg:#f6efdf;--lk-htx:#3a2d1f;--lk-ff:Georgia,'Times New Roman',serif;--lk-so:.9}",
-    ".bb img.bb-scene{position:absolute;right:0;top:0;width:58%;height:88px;object-fit:cover;object-position:70% 55%;opacity:.45;pointer-events:none;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 60%),linear-gradient(180deg,#000 35%,transparent 100%);-webkit-mask-composite:source-in;mask-image:linear-gradient(90deg,transparent 0,#000 60%),linear-gradient(180deg,#000 35%,transparent 100%);mask-composite:intersect}",
-    ".bb img.bb-scene.hd{height:100%;opacity:var(--lk-so,.8);-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 55%);mask-image:linear-gradient(90deg,transparent 0,#000 55%)}",
-    ".bb-lh{position:relative;min-height:96px;display:flex;align-items:center;padding:6px 10px;overflow:hidden}",
-    ".bb-lh>div{position:relative}.bb-lh .ti{font-size:20px;font-weight:500}.bb-lh .sb{font-size:16px;color:var(--text-secondary)}",
-    ".bb-lh .st{display:flex;align-items:center;gap:8px;font-size:16px;color:var(--text-secondary)}",
-    ".bb[data-bb-look] .bb-body{padding:0 10px 10px}",
-    ".bb[data-bb-look] .bb-sec,.bb[data-bb-look] .bb-body>.bb-sec:first-child{padding:7px 0;margin-top:0;border-top:1px solid var(--border)}",
-    ".bb[data-bb-look] .bb-sec .l{font-family:var(--lk-lf,inherit);margin-bottom:0}",
-    ".bb[data-bb-look] .bb-ul{list-style:none;padding-left:0}.bb[data-bb-look] .bb-ul li{line-height:1.45;margin:0}",
-    ".bb[data-bb-look] .bb-row{padding:1px 0}.bb[data-bb-look] .bb-row+.bb-row{border-top:0}",
-    ".bb[data-bb-look] .bb-meta{background:transparent;padding:0;margin:0}.bb[data-bb-look] .bb-meta summary{color:var(--text-primary);padding:4px 0}",
-    ".bb[data-bb-look] .bb-q{margin-top:8px}",
-    ".bb-im{display:flex;gap:12px;align-items:center}.bb-im>.tx{flex:1;min-width:0}.bb-im .bb-h{margin:0}",
-    ".bb-ic{flex:none;width:44px;height:44px;object-fit:contain;filter:drop-shadow(0 3px 2px rgba(0,0,0,.3))}.bb-ic.sm{width:24px;height:24px}",
-    ".bb-ic.ng{animation:bbng 2.6s ease-in-out infinite alternate}@keyframes bbng{to{transform:translateX(5px)}}",
-    ".bb.bb-tsw{margin:0 0 12px}.bb-tsw .bb-lh{min-height:72px}",
-    ".bb-flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;padding-top:6px}",
-    ".bb-step{flex:1 1 130px;border:0.5px solid var(--border-strong,#c9c7bd);border-radius:10px;padding:10px 12px;background:var(--surface-1,#f6f5f1)}",
-    ".bb-step .l{font-size:16px;font-weight:500;color:var(--text-secondary,#5f5e5a)}",
-    ".bb-step .t{font-size:16px;line-height:1.45}",
-    ".bb-step.hot{border:2px solid var(--border-accent,#378ADD);background:var(--surface-2,#fff)}",
-    ".bb-det summary{cursor:pointer;font-size:16px;font-weight:500;color:var(--text-secondary,#5f5e5a);padding:12px 0 4px}",
-    ".bb-det ul{margin:0 0 6px;padding-left:20px}.bb-det li{font-size:16px;line-height:1.7}.bb-det b{font-weight:500}",
-    ".bb-q{background:var(--bg-accent,#E6F1FB);border-radius:10px;padding:14px 16px;margin-top:12px}",
-    ".bb-q .qh{display:flex;gap:12px;align-items:flex-start;margin-bottom:8px}",
-    ".bb-q .qq{flex:1;font-size:18px;font-weight:500;color:var(--text-primary,#1c1c1a)}",
-    ".bb-aids{display:flex;gap:6px;flex:none}",
-    ".bb-aid{box-sizing:border-box;width:28px;height:28px;border-radius:50%;display:block;padding:0;cursor:pointer;user-select:none;color:var(--text-primary,#1c1c1a);background:var(--surface-2,#fff);border:1px solid var(--border-strong,#c9c7bd)}",
-    ".bb-aid svg{display:block;width:100%;height:100%}",
-    ".bb-aid:focus-visible{outline:2px solid var(--text-primary,#1c1c1a);outline-offset:1px}",
-    ".bb-aid.on{border-color:var(--text-primary,#1c1c1a);background:var(--text-primary,#1c1c1a);color:var(--surface-2,#fff)}",
-    ".bb-tip{display:none;margin:0 0 10px;padding:10px 12px;border-radius:8px;font-size:16px;line-height:1.55;color:var(--text-primary,#1c1c1a);background:var(--surface-2,#fff);border:0.5px solid var(--border-strong,#c9c7bd)}",
-    ".bb-tip.on{display:block}.bb-tip b{display:block;font-weight:600;margin-bottom:2px}.bb-tip div{margin-top:2px}",
-    ".bb-q .c{display:flex;gap:10px;font-size:16px;line-height:1.6;color:var(--text-primary,#1c1c1a)}",
-    ".bb-q .c b{font-weight:500;min-width:20px}",
-    ".bb-note{display:flex;gap:12px;align-items:flex-start;padding:14px 18px}",
-    ".bb-note .m{width:4px;align-self:stretch;border-radius:2px;background:var(--border-accent,#378ADD)}",
-    ".bb-note .t{font-size:18px;line-height:1.55}",
-    ".bb.bb-bare{border:0;background:transparent;overflow:visible;border-radius:0;padding:2px 6px 24px;--bbg:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")}",
-    ".bb-line{display:flex;gap:10px;align-items:center;font-size:18px;line-height:1.55;padding:2px 0}",
-    ".bb-orb{width:18px;height:18px;border-radius:50%;flex:none;background:radial-gradient(circle at 32% 28%,#b9f0c9,#2f9e5b 55%,#1c6b3c);box-shadow:0 1px 2px rgba(0,0,0,.35),inset 0 -2px 3px rgba(0,0,0,.25)}",
-    ".bb-orb.warn{background:radial-gradient(circle at 32% 28%,#ffe2ad,#e0932a 55%,#9a5f10)}.bb-orb.bad{background:radial-gradient(circle at 32% 28%,#ffc4c0,#d8463f 55%,#8e2420)}",
-    ".bb-desk{padding:20px 18px 30px;border-radius:14px;background:linear-gradient(160deg,rgba(120,120,110,.16),rgba(120,120,110,.05))}",
-    ".bb[data-bb-theme] .bb-desk{background:var(--bb-desk,none) 0 0/256px,linear-gradient(160deg,rgba(120,120,110,.16),rgba(120,120,110,.05));box-shadow:inset 0 2px 6px rgba(0,0,0,.28),inset 0 0 0 1px rgba(0,0,0,.12)}",
-    ".bb[data-bb-theme] .bb-stage{background:linear-gradient(180deg,rgba(27,36,48,.86),rgba(14,20,28,.93)),var(--bb-stage,none) 0 0/256px,#0e141c}",
-    ".bb[data-bb-theme] .bb-slip{background:linear-gradient(color-mix(in srgb,var(--surface-1) 80%,transparent),color-mix(in srgb,var(--surface-1) 80%,transparent)),var(--bb-slip,none) 0 0/256px,var(--surface-1)}",
-    ".bb-sheet{position:relative;max-width:520px;margin:0 auto;padding:22px 22px 20px;border-radius:3px;background:#fbfaf6;color:#22211e;transform:rotate(-.4deg);box-shadow:0 1px 1px rgba(0,0,0,.16),0 6px 8px -5px rgba(0,0,0,.22),0 18px 16px -14px rgba(0,0,0,.36)}",
-    ".bb-sheet:before{content:'';position:absolute;inset:0;border-radius:3px;background:var(--bbg);opacity:.22;mix-blend-mode:multiply;pointer-events:none}",
-    ".bb-sheet:after{content:'';position:absolute;inset:0;border-radius:3px;background:linear-gradient(115deg,rgba(255,255,255,.55),rgba(255,255,255,0) 38%,rgba(0,0,0,.05));pointer-events:none}",
-    ".bb-sheet p{margin:0 0 10px;position:relative;font-size:18px;line-height:1.6;white-space:pre-line}.bb-sheet p:last-child{margin-bottom:0}",
-    ".bb-sheet .to{font-size:16px;color:#6a675f;border-bottom:1px solid #e3e0d6;padding-bottom:8px}",
-    ".bb-check{margin:12px 0 0;font-size:16px;color:var(--text-secondary,#5f5e5a);text-align:center}",
-    ".bb-miss{display:flex;align-items:center;justify-content:center;text-align:center;min-height:72px;padding:12px 14px;margin:6px 0;border:1.5px dashed #E24B4A;border-radius:10px;color:#a12524;background:rgba(226,75,74,.06);font-size:16px;line-height:1.45}",
-    ".bb-cap{font-size:19px;font-weight:600;margin:0 0 10px}",
-    ".bb-stage{border-radius:16px;padding:16px;position:relative;overflow:hidden;background:linear-gradient(180deg,#1b2430,#0e141c);color:#eef2f6;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 0 1px rgba(255,255,255,.06),0 18px 16px -16px rgba(0,0,0,.5)}",
-    ".bb-stage:before{content:'';position:absolute;inset:0;background:radial-gradient(120% 70% at 20% -10%,rgba(140,190,255,.28),transparent 60%),var(--bbg);opacity:.8;mix-blend-mode:soft-light;pointer-events:none}",
-    ".bb-stage>*{position:relative}",
-    ".bb-bar{display:grid;grid-template-columns:minmax(90px,30%) 1fr auto;gap:10px;align-items:center;margin:8px 0;font-size:16px}",
-    ".bb-bar i{display:block;height:12px;border-radius:6px;background:linear-gradient(180deg,#9fd0ff,#3d8fe0 60%,#2a6fb8);box-shadow:0 2px 4px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.5)}",
-    ".bb-bar b{text-align:right;font-weight:600;font-variant-numeric:tabular-nums}",
-    ".bb-stage ul{margin:0;padding-left:20px}.bb-stage li{font-size:16px;line-height:1.7}",
-    ".bb-stage img{display:block;max-width:100%;border-radius:8px;margin:0 auto}",
-    ".bb-stage a{color:#9fd0ff}",
-    ".bb{--text-primary:var(--color-text-primary,#1c1c1a);--text-secondary:var(--color-text-secondary,#5f5e5a);--border:var(--color-border-tertiary,#d9d7cf);--border-strong:var(--color-border-secondary,#c9c7bd);--border-accent:var(--color-border-info,#378ADD);--bg-accent:var(--color-background-info,#E6F1FB);--bg-ok:var(--color-background-success,#EAF3DE);--text-ok:var(--color-text-success,#27500A);--surface-1:var(--color-background-secondary,#f6f5f1);--surface-2:var(--color-background-primary,#fff)}",
-    ".bb-h{font-size:22px;font-weight:600;line-height:1.35;margin:0 0 10px}",
-    ".bb-slip{position:relative;border-radius:12px;padding:14px 16px;background:var(--surface-1);border:0.5px solid var(--border);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 14px 14px -14px rgba(0,0,0,.35)}",
-    ".bb-slip:before{content:'';position:absolute;inset:0;border-radius:12px;background:var(--bbg);opacity:.18;mix-blend-mode:soft-light;pointer-events:none}",
-    ".bb-slip>*{position:relative}",
-    ".bb-slip .l{font-size:16px;font-weight:600;color:var(--text-secondary);margin-bottom:6px}",
-    ".bb-done{display:flex;gap:10px;align-items:flex-start;font-size:16px;line-height:1.55;padding:4px 0}",
-    ".bb-tick{flex:none;width:16px;height:16px;margin-top:4px;border-radius:50%;background:radial-gradient(circle at 32% 28%,#b9f0c9,#2f9e5b 55%,#1c6b3c);box-shadow:0 1px 2px rgba(0,0,0,.3);position:relative}",
-    ".bb-tick:after{content:'';position:absolute;left:5px;top:2.5px;width:4px;height:7px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(45deg)}",
-    ".bb-pt{font-size:18px;line-height:1.6;margin:0 0 6px}",
-    ".bb-lp{margin:0 0 16px}.bb-lp .k{display:block;font-size:18px;font-weight:600;line-height:1.4;margin:0 0 2px}.bb-lp .t{display:block;font-size:18px;line-height:1.6;color:var(--text-primary)}",
-    ".bb-tbl{width:100%;border-collapse:collapse;font-size:16px;margin-top:8px}.bb-tbl th{text-align:left;font-weight:600;color:var(--text-secondary);padding:6px 10px 6px 0}.bb-tbl td{padding:7px 10px 7px 0;border-top:0.5px solid var(--border);vertical-align:top}",
-    ".bb-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}",
-    ".bb-chip{font-size:16px;padding:5px 12px;border-radius:999px;text-decoration:none;color:var(--text-primary);background:var(--surface-1);border:0.5px solid var(--border-strong);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 3px 3px -2px rgba(0,0,0,.25)}",
-    ".bb-ba{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}",
-    ".bb-pane{border-radius:12px;padding:12px 14px;border:0.5px solid var(--border);font-size:16px;line-height:1.55;white-space:pre-line;position:relative}",
-    ".bb-pane .l{font-size:16px;font-weight:600;letter-spacing:.04em;color:var(--text-secondary);margin-bottom:4px;white-space:normal}",
-    ".bb-pane.old{background:transparent;color:var(--text-secondary)}",
-    ".bb-pane.new{background:var(--surface-2);border:1.5px solid var(--border-accent);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 16px 14px -14px rgba(0,0,0,.4)}",
-    ".bb-pane mark{background:rgba(255,214,90,.55);color:inherit;border-radius:3px;padding:0 2px}",
-    "@media (max-width:520px){.bb-ba,.bb-cols{grid-template-columns:1fr}}",
-    ".bb-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;align-items:start;padding-bottom:16px}",
-    ".bb-opt{border-radius:12px;padding:12px 14px;border:0.5px solid var(--border);position:relative}",
-    ".bb-opt.pick{background:var(--surface-2);border:1.5px solid var(--border-accent);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 16px 14px -14px rgba(0,0,0,.4)}",
-    ".bb-opt .nm{font-size:18px;font-weight:600;margin-bottom:6px}",
-    ".bb-opt .tag{display:inline-block;font-size:16px;font-weight:600;letter-spacing:.04em;padding:1px 8px;border-radius:999px;background:var(--border-accent);color:#fff;margin-left:8px;vertical-align:2px}",
-    ".bb-opt .r{border-top:0.5px solid var(--border);padding:6px 0;font-size:16px;line-height:1.45}",
-    ".bb-opt .r span{display:block;font-size:16px;color:var(--text-secondary)}",
-    ".bb-prose p{font-size:18px;line-height:1.7;margin:0 0 12px;max-width:62ch}",
-    ".bb-key{font-size:21px;line-height:1.45;font-weight:600;margin:4px 0 16px;padding:2px 0 2px 14px;border-left:3px solid var(--border-accent);max-width:56ch}",
-    ".bb-say p{font-size:19px;line-height:1.7;margin:0 0 8px}.bb-say .ask{font-weight:600;margin-top:14px}",
-    ".bb-pane.pic{padding:10px}",
-    ".bb-pane img{display:block;width:100%;height:auto;border-radius:8px;background:var(--surface-1)}",
-    ".bb-pane.old img{opacity:.82}",
-    ".bb-pane .cap{font-size:16px;line-height:1.45;margin-top:8px;white-space:normal}",
-    ".bb-fade{opacity:0;transform:translateY(6px);transition:opacity .5s ease,transform .5s ease}",
-    ".bb-fade.in{opacity:1;transform:none}",
-    "@media (prefers-reduced-motion: reduce){.bb-fade{transition:none;opacity:1;transform:none}.bb-dot.live,.bb-ic.ng{animation:none}}",
-    "@media (max-width:520px){.bb-title{font-size:24px;max-width:none}.bb-sub{max-width:none}.bb-hero{height:auto}.bb-hero .bb-art{position:relative;width:100%;height:auto;aspect-ratio:3/2}.bb-hero .bb-shade{display:none}.bb-hero .bb-over{position:relative;left:auto;right:auto;top:auto;bottom:auto;padding:14px 18px 16px;gap:12px}.bb-ba,.bb-cols{grid-template-columns:1fr}.bb-ic{width:38px;height:38px}.bb-im{gap:10px}.bb-lh{min-height:84px}.bb img.bb-scene{width:64%}}"
+    ".bb{--ink:var(--color-text-primary,var(--text-primary,#1c1c1a));--muted:var(--color-text-secondary,var(--text-secondary,#5f5e5a));--line:var(--color-border-tertiary,var(--border,#e4e2dc));--bg:var(--color-background-primary,var(--surface-2,#fff));--panel:var(--color-background-secondary,var(--surface-1,#f7f6f3));--acc:var(--bb-acc,var(--color-border-info,#378ADD));--ok:var(--color-text-success,#1f8a4c);--warn:#b26a00;--bad:#c23b3b;",
+    "--acct:color-mix(in srgb,var(--acc) 78%,var(--ink));--accbg:color-mix(in srgb,var(--acc) 11%,var(--bg));--accln:color-mix(in srgb,var(--acc) 34%,var(--bg));--key:color-mix(in srgb,var(--ink) 7%,var(--bg));",
+    "position:relative;font-family:inherit;font-size:16px;line-height:1.5;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:14px;overflow:hidden;padding:20px 0 0}",
+    ".bb *{box-sizing:border-box}.bb p{margin:0}",
+    ".bb>*{position:relative;z-index:1;margin-left:24px;margin-right:24px}",
+    ".bb>.bb-q,.bb>.bb-fold,.bb>.bb-corner{margin-left:0;margin-right:0}",
+    ".bb>:last-child:not(.bb-q):not(.bb-fold){margin-bottom:22px}",
+    ".bb [data-bb-long],.bb .bb-sub,.bb .bb-tx,.bb p{text-wrap:pretty}.bb .bb-h1{text-wrap:balance}",
+    ".bb-top{display:flex;align-items:center;gap:10px;color:var(--muted);min-height:26px}",
+    ".bb-top .bb-pill{margin-left:auto}",
+    ".bb-pill{display:inline-flex;align-items:center;gap:7px;font-weight:500;color:var(--ok);background:color-mix(in srgb,var(--bg) 84%,transparent);padding:2px 10px;border-radius:999px;white-space:nowrap}",
+    ".bb-pill i{width:8px;height:8px;border-radius:50%;background:currentColor}.bb-pill.warn{color:var(--warn)}.bb-pill.bad{color:var(--bad)}",
+    ".bb-h1{font-size:26px;line-height:1.25;font-weight:600;letter-spacing:-.012em;margin-top:6px;margin-bottom:0}",
+    ".bb-sub{color:var(--muted);margin-top:6px}",
+    ".bb-stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}",
+    ".bb-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;background:var(--panel);border:1px solid var(--line);white-space:nowrap;text-decoration:none;color:var(--ink)}",
+    ".bb-chip b{font-weight:600}.bb-chip.ok{background:color-mix(in srgb,var(--ok) 11%,var(--bg));border-color:transparent;color:var(--ok)}.bb-chip.warn{background:color-mix(in srgb,var(--warn) 12%,var(--bg));border-color:transparent;color:var(--warn)}",
+    ".bb-sec{margin-top:20px}",
+    ".bb-lab{color:var(--muted);margin-bottom:4px}",
+    ".bb-ln{display:flex;align-items:flex-start;gap:12px;padding:4px 0}",
+    ".bb-ln .bb-tx{flex:1;min-width:0}.bb-ln .bb-tx b{font-weight:600}",
+    ".bb-ln .bb-mt{flex:none;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}",
+    ".bb-ic{flex:none;width:20px;height:20px;margin-top:2px;border-radius:6px;display:grid;place-items:center;background:var(--key);color:var(--muted)}",
+    ".bb-ic svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}",
+    ".bb-ic.ok{background:color-mix(in srgb,var(--ok) 13%,var(--bg));color:var(--ok)}.bb-ic.warn{background:color-mix(in srgb,var(--warn) 14%,var(--bg));color:var(--warn)}.bb-ic.bad{background:color-mix(in srgb,var(--bad) 13%,var(--bg));color:var(--bad)}.bb-ic.go{background:var(--accbg);color:var(--acct)}",
+    ".bb-pt{padding:5px 0}.bb-pt b{display:block;font-weight:600}",
+    ".bb-txt{margin-top:4px}",
+    ".bb-tbl{width:calc(100% - 48px);border-collapse:collapse;margin-top:16px}.bb-tbl th{text-align:left;font-weight:600;padding:8px 12px 8px 0;border-bottom:1px solid var(--line)}.bb-tbl td{padding:8px 12px 8px 0;border-bottom:1px solid var(--line);vertical-align:top}.bb-tbl tr:last-child td{border-bottom:0}",
+    ".bb-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}",
+    ".bb-cmp{display:grid;margin-top:16px;border:1px solid var(--line);border-radius:12px;overflow:hidden}",
+    ".bb-cmp>div{padding:10px 14px;border-top:1px solid var(--line);display:flex;align-items:center;gap:8px;min-width:0}",
+    ".bb-cmp>.h{border-top:0;font-weight:600}.bb-cmp>.rl{color:var(--muted)}.bb-cmp>.p{background:var(--accbg)}",
+    ".bb-key{flex:none;width:26px;height:26px;border-radius:8px;display:inline-grid;place-items:center;font-weight:600;background:var(--key);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}",
+    ".bb-cmp .p .bb-key,.bb-c.pick .bb-key{background:var(--acc);color:#fff}",
+    ".bb-flow{margin-top:16px}",
+    ".bb-st{display:flex;gap:14px;padding:10px 12px;border-radius:10px}",
+    ".bb-st .n{flex:none;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:600;background:var(--key)}",
+    ".bb-st .l{color:var(--muted)}.bb-st.hot{background:var(--accbg)}.bb-st.hot .n{background:var(--acc);color:#fff}.bb-st.hot .l{color:var(--acct);font-weight:600}",
+    ".bb-ba{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}",
+    ".bb-pane{border-radius:12px;padding:12px 14px;border:1px solid var(--line);white-space:pre-line}",
+    ".bb-pane .l{color:var(--muted);margin-bottom:4px;white-space:normal}.bb-pane.new{border-color:var(--accln);background:var(--accbg)}.bb-pane.new .l{color:var(--acct);font-weight:600}",
+    ".bb-pane img{display:block;width:100%;height:auto;border-radius:8px;background:var(--panel)}.bb-pane .cap{margin-top:8px;white-space:normal}",
+    ".bb-pane mark{background:rgba(255,214,90,.5);color:inherit;border-radius:3px;padding:0 2px}",
+    ".bb-box{margin-top:16px;border:1px solid var(--line);border-radius:12px;padding:14px 16px}",
+    ".bb-box img{display:block;max-width:100%;border-radius:8px;margin:0 auto}",
+    ".bb-bar{display:grid;grid-template-columns:minmax(90px,32%) 1fr auto;gap:12px;align-items:center;padding:5px 0}",
+    ".bb-bar i{display:block;height:10px;border-radius:5px;background:var(--acc)}.bb-bar b{font-weight:600;font-variant-numeric:tabular-nums}",
+    ".bb-sheet{margin-top:16px;border:1px solid var(--line);border-radius:10px;padding:18px 20px;background:var(--bg);box-shadow:0 1px 2px rgba(0,0,0,.05)}",
+    ".bb-sheet p{margin:0 0 12px;white-space:pre-line}.bb-sheet p:last-child{margin-bottom:0}",
+    ".bb-prose p{margin:0 0 12px;max-width:64ch;line-height:1.65}",
+    ".bb-pull{font-size:18px;font-weight:600;line-height:1.45;margin:4px 0 16px;padding-left:14px;border-left:3px solid var(--acc);border-radius:0}",
+    ".bb-say p{font-size:18px;line-height:1.6;margin:0 0 8px}.bb-say .ask{font-weight:600;margin-top:12px}",
+    ".bb-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:16px}",
+    ".bb-tile{border:1px solid var(--line);border-radius:10px;padding:10px 14px}.bb-tile .v{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums}.bb-tile .k,.bb-tile .t{color:var(--muted)}",
+    ".bb-miss{display:flex;align-items:center;justify-content:center;text-align:center;min-height:72px;padding:12px 14px;border:1px dashed var(--line);border-radius:10px;color:var(--muted)}",
+    ".bb-fold{border-top:1px solid var(--line)}.bb>:not(.bb-fold):not(.bb-q):not(.bb-corner)+.bb-fold{margin-top:20px}",
+    ".bb-fold>summary{list-style:none;cursor:pointer;padding:12px 24px;color:var(--muted);display:flex;align-items:center;gap:10px}",
+    ".bb-fold>summary::-webkit-details-marker{display:none}",
+    ".bb-fold>summary::before{content:'';flex:none;width:7px;height:7px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(-45deg);transition:transform .15s}",
+    ".bb-fold[open]>summary::before{transform:rotate(45deg)}.bb-fold>summary b{color:var(--ink);font-weight:500}",
+    ".bb-fold .bb-fb{padding:0 24px 14px 41px;color:var(--muted)}.bb-fold .bb-fb .bb-ln{color:var(--ink)}",
+    ".bb-q{margin-top:22px;padding:18px 24px 18px;background:color-mix(in srgb,var(--panel) 95%,var(--acc) 5%);border-top:1px solid var(--line)}",
+    ".bb>.bb-q:last-child,.bb>.bb-fold:last-child{margin-bottom:0}",
+    ".bb-q .qq{font-size:18px;font-weight:600;margin-bottom:10px}",
+    ".bb-c{display:flex;align-items:center;gap:12px;padding:8px 12px;border-radius:10px;border:1px solid transparent}",
+    ".bb-c+.bb-c{margin-top:2px}.bb-c .tx{flex:1;min-width:0}.bb-c .bb-mt{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}",
+    ".bb-c.pick{background:var(--accbg);border-color:var(--accln)}.bb-c .tag{color:var(--acct);font-weight:500;margin-left:8px;white-space:nowrap}.bb-c.other{color:var(--muted)}",
+    ".bb-q.chips .bb-cs{display:flex;flex-wrap:wrap;gap:8px}.bb-q.chips .bb-c{border-color:var(--line);background:var(--bg);padding:6px 12px 6px 6px}.bb-q.chips .bb-c+.bb-c{margin-top:0}.bb-q.chips .bb-c.pick{border-color:var(--accln);background:var(--accbg)}",
+    ".bb-aids{display:flex;flex-wrap:wrap;gap:20px;margin:12px 0 0 12px}",
+    ".bb-aid{cursor:pointer;color:var(--acct);font-weight:500;border-bottom:1px dotted var(--acct);user-select:none}",
+    ".bb-aid:focus-visible{outline:2px solid var(--acct);outline-offset:2px}.bb-aid.on{border-bottom-style:solid}",
+    ".bb-tip{display:none;margin:10px 0 0;padding:10px 14px;border-radius:10px;background:var(--bg);border:1px solid var(--line)}",
+    ".bb-tip.on{display:block}.bb-tip b{display:block;font-weight:600;margin-bottom:2px}",
+    ".bb-corner{position:absolute;top:0;right:0;width:330px;height:170px;z-index:0;pointer-events:none;object-fit:cover;",
+    "-webkit-mask-image:linear-gradient(to left,#000 18%,transparent 72%),linear-gradient(#000 45%,transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to left,#000 18%,transparent 72%),linear-gradient(#000 45%,transparent);mask-composite:intersect}",
+    ".bb-corner.hero{width:290px;height:178px;-webkit-mask-image:linear-gradient(to left,#000 50%,transparent 97%),linear-gradient(#000 62%,transparent);mask-image:linear-gradient(to left,#000 50%,transparent 97%),linear-gradient(#000 62%,transparent)}",
+    ".bb.has-hero .bb-h1{max-width:440px}",
+    "@media (prefers-color-scheme:dark){.bb-corner{filter:brightness(.82) saturate(.92)}}",
+    ".bb[data-bb-look=forest]{--bb-acc:#3f7d4c}.bb[data-bb-look=mech]{--bb-acc:#c25a20}.bb[data-bb-look=story]{--bb-acc:#a46a2b}.bb[data-bb-look=graffiti]{--bb-acc:#c8236a}",
+    ".bb.bb-tiny{padding:14px 0}.bb.bb-tiny>*{margin-left:18px;margin-right:18px}.bb.bb-tiny>:last-child{margin-bottom:0}.bb.bb-tiny .bb-ln{font-size:18px;padding:0}.bb.bb-tiny .bb-ic{margin-top:4px}",
+    ".bb.bb-tiny>.bb-q{margin:14px 0 -14px}",
+    ".bb-tsw{margin-top:12px}.bb-tsw .bb{padding-top:16px}.bb-tsw .bb>:last-child{margin-bottom:16px}.bb-tsw .bb-corner{height:96px;width:300px}",
+    ".bb-fade{opacity:0;transform:translateY(4px);transition:opacity .35s ease,transform .35s ease}.bb-fade.in{opacity:1;transform:none}",
+    "@media (prefers-reduced-motion:reduce){.bb-fade{transition:none;opacity:1;transform:none}}",
+    "@media (max-width:560px){.bb>*{margin-left:18px;margin-right:18px}.bb-tbl{width:calc(100% - 36px)}.bb-q,.bb-fold>summary{padding-left:18px;padding-right:18px}.bb-corner,.bb-corner.hero{width:56%;opacity:.55}.bb.has-hero .bb-h1{max-width:none}.bb-ba{grid-template-columns:1fr}.bb-h1{font-size:24px}.bb-ln .bb-mt{display:none}}"
   ].join("");
 
   function el(tag, cls, text) {
@@ -168,140 +118,106 @@
     if (text != null) e.textContent = text;
     return e;
   }
-  // A point is "text", "Label: text" or [label, text]. A labelled point puts the label
-  // on its own bold line with space between points, so a list of them is scannable.
-  function point(t) {
-    var k = null, v = t;
-    if (Object.prototype.toString.call(t) === "[object Array]") { k = t[0]; v = t[1]; }
-    else if (typeof t === "string") { var m = /^([^:.!?\n]{2,48}):\s+([\s\S]+)$/.exec(t); if (m) { k = m[1]; v = m[2].charAt(0).toUpperCase() + m[2].slice(1); } }
-    if (!k) return el("p", "bb-pt", v);
-    var d = el("div", "bb-lp"); d.appendChild(el("span", "k", k)); d.appendChild(el("span", "t", v)); return d;
-  }
+  function isArr(x) { return Object.prototype.toString.call(x) === "[object Array]"; }
   function css() {
-    if (document.getElementById("bb-css")) return;
-    var s = el("style"); s.id = "bb-css"; s.textContent = CSS; document.head.appendChild(s);
+    var old = document.getElementById("bb-css");
+    if (old && old.getAttribute("data-v") === VERSION) return;
+    if (old) old.parentNode.removeChild(old);
+    var s = el("style"); s.id = "bb-css"; s.setAttribute("data-v", VERSION); s.textContent = CSS; document.head.appendChild(s);
   }
-  function still() {
-    return root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function still() { return root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+  // Mark a slot that is longer than its limit, so the gallery check can catch the payload.
+  function fit(node, kind, text) {
+    if (String(text == null ? "" : text).length > LIMIT[kind]) node.setAttribute("data-bb-long", kind);
+    return node;
   }
+
   /* ---- shared parts ---------------------------------------------------------- */
-  // A list row written "Label: text" draws the label bold, so a column of rows can be scanned.
-  function lead(text) {
-    var s = el("span"), m = typeof text === "string" && /^([^:.!?\n]{2,48}):\s+([\s\S]+)$/.exec(text);
-    if (!m) { s.textContent = text == null ? "" : text; return s; }
-    var b = el("b", null, m[1] + ": "); b.style.fontWeight = "600";
-    s.appendChild(b); s.appendChild(document.createTextNode(m[2])); return s;
+  var ICON = {
+    ok: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg>',
+    go: '<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+    warn: '<svg viewBox="0 0 24 24"><path d="M12 7v6M12 17h.01"/></svg>',
+    bad: '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>',
+    dot: '<svg viewBox="0 0 24 24"><path d="M12 12h.01"/></svg>'
+  };
+  function icon(kind) { var i = el("span", "bb-ic " + kind); i.innerHTML = ICON[kind] || ICON.dot; i.setAttribute("aria-hidden", "true"); return i; }
+  // A line of text written "Label: text" draws the label bold.
+  function lead(text, into) {
+    var m = typeof text === "string" && /^([^:.!?\n]{2,48}):\s+([\s\S]+)$/.exec(text);
+    if (!m) { into.appendChild(document.createTextNode(text == null ? "" : String(text))); return; }
+    into.appendChild(el("b", null, m[1] + ": ")); into.appendChild(document.createTextNode(m[2]));
   }
-  function tiles(list) {
-    var wrap = el("div", "bb-tiles");
-    (list || []).forEach(function (t) {
-      var c = el("div", "bb-tile bb-fade");
-      c.appendChild(el("div", "k", t.k));
-      var v = el("div", "v", String(t.v)); c.appendChild(v);
-      if (t.n) c.appendChild(el("div", "n", t.n));
-      wrap.appendChild(c);
-      var num = typeof t.v === "number" ? t.v : null;
-      if (num !== null && !still()) {
-        var start = null, fmt = function (x) { return Math.round(x).toLocaleString(); };
-        v.textContent = "0";
-        var step = function (ts) {
-          if (start === null) start = ts;
-          var p = Math.min(1, (ts - start) / 1100), e = 1 - Math.pow(1 - p, 3);
-          v.textContent = fmt(num * e) + (t.unit || "");
-          if (p < 1) root.requestAnimationFrame(step);
-        };
-        root.requestAnimationFrame(step);
-      } else if (num !== null) v.textContent = num.toLocaleString() + (t.unit || "");
-    });
-    return wrap;
-  }
-  function sections(list, into) {
-    (list || []).forEach(function (s) {
-      var d = el("div", "bb-sec bb-fade");
-      d.appendChild(el("div", "l", s.label)); d.appendChild(el("div", "t", s.text));
-      into.appendChild(d);
-    });
-  }
-  // A look's picture: a category picture (i1..i4), or its header scene.
-  function dragon(cls) {
-    var still_ = still(), v = el(still_ ? "img" : "video", cls);
-    if (still_) { v.src = BASE + "dragon-poster.jpg"; v.alt = ""; return v; }
-    v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
-    v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("aria-hidden", "true");
-    v.poster = BASE + "dragon-poster.jpg"; v.src = BASE + "dragon-loop.mp4"; return v;
-  }
-  function pic(name, cls, look) {
-    var i = el("img", cls || "bb-ic"); i.src = BASE + "elements/" + (look || LOOK) + "/" + name + ".webp"; i.alt = ""; return i;
-  }
-  // Put a look's category picture beside a block. With no look the block is returned as it is.
-  // An empty name keeps the indent without a picture, so sections line up.
-  function beside(name, node) {
-    if (!LOOK) return node;
-    var w = el("div", "bb-im"), t = el("div", "tx");
-    w.appendChild(name ? pic(name, "bb-ic" + (name === "i2" ? " ng" : "")) : el("span", "bb-ic"));
-    t.appendChild(node); w.appendChild(t); return w;
-  }
-  // A look's header: the title and status on the left, the calm scene fading in from the right.
-  function lookHead(p, card, look) {
-    // A look's hero character belongs in big headers only - the opening, the close and a
-    // status - never behind body text. Graffiti's hero is the moving dragon.
-    var lk = look || LOOK, gd = KIND === "brief" || KIND === "close" || KIND === "mission", h = el("div", "bb-lh" + (gd ? " gd" : "")), d = el("div");
-    h.appendChild(!gd ? pic("scene", "bb-scene hd", look) : lk === "graffiti" ? dragon("bb-gd") : pic("hero", "bb-gd", lk));
-    d.appendChild(el("div", "ti", p.title));
-    if (p.sub) d.appendChild(el("div", "sb", p.sub));
-    if (p.status) {
-      var st = el("div", "st"); st.appendChild(el("span", "bb-dot live" + (p.status.tone === "warn" ? " warn" : p.status.tone === "bad" ? " bad" : "")));
-      st.appendChild(el("span", null, p.status.text)); d.appendChild(st);
-    }
-    h.appendChild(d); card.appendChild(h);
-  }
-  // A titled list of short lines. A line is "text", "Label: text" or [label, text].
-  function lines(label, list, into, icon) {
-    if (!list || !list.length) return;
-    var d = el("div", "bb-sec bb-fade"), ul = el("ul", "bb-ul");
-    d.appendChild(el("div", "l", label));
-    list.forEach(function (t) {
-      var li = el("li");
-      if (Object.prototype.toString.call(t) === "[object Array]") { li.appendChild(el("b", null, t[0] + ": ")); li.appendChild(document.createTextNode(t[1])); }
-      else li.appendChild(lead(t));
-      ul.appendChild(li);
-    });
-    if (LOOK) { var b = el("div"); b.appendChild(d.firstChild); b.appendChild(ul); d.appendChild(beside(icon || "", b)); }
-    else d.appendChild(ul);
-    into.appendChild(d);
-  }
-  // One roadmap-style row: an ID, a plain one-line meaning, and a state on the right.
-  // An item is {id, text, state} or [id, text, state]; only "Ready" is tinted.
-  function row(it) {
-    var a = Object.prototype.toString.call(it) === "[object Array]" ? { id: it[0], text: it[1], state: it[2] } : (it || {});
-    var r = el("div", "bb-row");
-    if (a.id) r.appendChild(el("span", "id", a.id));
-    r.appendChild(el("span", "tx", a.text));
-    if (a.state) r.appendChild(el("span", "bb-st" + (/^ready$/i.test(a.state) ? " go" : ""), a.state));
+  function textOf(t) { return isArr(t) ? t[0] + ": " + t[1] : t == null ? "" : String(t); }
+  // One row: a mark, the text, and an optional short note on the right.
+  function rowLine(kind, t, meta) {
+    var r = el("div", "bb-ln"), tx = el("span", "bb-tx"), s = textOf(t);
+    r.appendChild(icon(kind));
+    if (isArr(t)) { tx.appendChild(el("b", null, t[0] + ": ")); tx.appendChild(document.createTextNode(t[1])); } else lead(s, tx);
+    r.appendChild(fit(tx, "line", s));
+    if (meta) r.appendChild(el("span", "bb-mt", meta));
     return r;
   }
-  function details(d, into) {
-    if (!d || !d.items || !d.items.length) return;
-    var box = el("details", "bb-det bb-sec"); box.style.paddingBottom = "0";
-    box.appendChild(el("summary", null, d.label || "Details"));
-    var ul = el("ul");
-    d.items.forEach(function (it) { var li = el("li"); li.appendChild(el("b", null, it[0] + ": ")); li.appendChild(document.createTextNode(it[1])); ul.appendChild(li); });
-    box.appendChild(ul); into.appendChild(box);
+  function section(label, list, kind, into) {
+    if (!list || !list.length) return null;
+    var d = el("div", "bb-sec bb-fade");
+    if (label) d.appendChild(el("div", "bb-lab", label));
+    list.forEach(function (t) { d.appendChild(rowLine(kind, t)); });
+    into.appendChild(d); return d;
   }
-  // Every question carries three decision aids beside it: ? says more about the question,
-  // + gives the reasons to take the recommended choice, - gives its risks. A click or tap
-  // opens an aid's text and a second one closes it - the same on a desktop as on a phone,
-  // never on hover. They show text only and never send a message, so they are not answer
-  // buttons. The marks are drawn as shapes, not typed characters, because a typed ? + or -
-  // sits off-centre in its circle by a different amount in every font.
-  var MARK = '<svg viewBox="0 0 26 26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
-  var AIDS = [
-    [MARK + '<path d="M10 10.2a3 3 0 1 1 4.6 2.5c-1 .7-1.6 1.2-1.6 2.5"/><path d="M13 18.6v.1"/></svg>', "more", "More about this question"],
-    [MARK + '<path d="M13 8v10M8 13h10"/></svg>', "pros", "Reasons to do it"],
-    [MARK + '<path d="M8 13h10"/></svg>', "risks", "Risks"]];
-  // 0.12.0 (2026-11-16): a picture that cannot be shown says so. Before this, an image whose
-  // address was not https:// or data:image (a file path, a picture too big to carry) was
-  // skipped without a word, and a pane with no text came out as an empty box.
+  function pill(st) {
+    if (!st || !has(st.text)) return null;
+    var p = el("span", "bb-pill" + (st.tone === "warn" ? " warn" : st.tone === "bad" ? " bad" : ""));
+    p.appendChild(el("i")); p.appendChild(el("span", null, st.text)); return p;
+  }
+  // The header every form shares: a quiet label, the status, the headline (the finding),
+  // an optional line under it, and optional number chips. A headline sent as two sentences
+  // keeps the first as the headline and moves the rest under it.
+  function head(card, o) {
+    var top = el("div", "bb-top"), pl = pill(o.status);
+    if (o.eyebrow) top.appendChild(el("span", null, o.eyebrow));
+    if (pl) top.appendChild(pl);
+    if (top.childNodes.length) card.appendChild(top);
+    var t = String(o.title == null ? "" : o.title).trim(), sub = o.sub;
+    if (t.length > LIMIT.h1) {
+      var m = /^(.{12,}?[.!?])\s+([\s\S]+)$/.exec(t);
+      if (m && m[1].length <= LIMIT.h1) { t = m[1]; sub = [m[2], sub].filter(has).join(" "); }
+    }
+    if (t) card.appendChild(fit(el("div", "bb-h1", t), "h1", t));
+    if (has(sub)) card.appendChild(el("div", "bb-sub", sub));
+    stats(o.stats, card);
+  }
+  // Number chips: [value, label, tone] or {v, k, tone}.
+  function stats(list, card) {
+    if (!isArr(list) || !list.length) return;
+    var w = el("div", "bb-stats bb-fade");
+    list.forEach(function (s) {
+      var a = isArr(s) ? { v: s[0], k: s[1], tone: s[2] } : (s || {});
+      if (!has(a.v) && !has(a.k)) return;
+      var c = el("span", "bb-chip" + (a.tone === "ok" || a.tone === "warn" ? " " + a.tone : ""));
+      if (a.tone === "ok") c.appendChild(icon("ok"));
+      if (has(a.v)) c.appendChild(el("b", null, String(a.v)));
+      if (has(a.k)) c.appendChild(document.createTextNode(String(a.k)));
+      w.appendChild(fit(c, "chip", (a.v || "") + " " + (a.k || "")));
+    });
+    if (w.childNodes.length) card.appendChild(w);
+  }
+  function fold(summary, build, card) {
+    var d = el("details", "bb-fold"), s = el("summary"), b = el("div", "bb-fb");
+    s.appendChild(summary); d.appendChild(s); build(b); d.appendChild(b); card.appendChild(d); return d;
+  }
+  function details(d, card) {
+    if (!d || !isArr(d.items) || !d.items.length) return;
+    fold(document.createTextNode(d.label || "Details"), function (b) {
+      d.items.forEach(function (it) { b.appendChild(rowLine("dot", isArr(it) ? it : String(it))); });
+    }, card);
+  }
+  function metaFold(meta, card) {
+    if (!meta || !has(meta.line)) return;
+    fold(document.createTextNode(meta.line), function (b) {
+      (meta.items || []).forEach(function (it) { b.appendChild(rowLine("dot", isArr(it) ? it : String(it))); });
+    }, card);
+  }
+  // 0.12.0: a picture that cannot be shown says so instead of an empty box.
   function picture(im, into) {
     var src = im && im.src || "";
     if (!/^(https:\/\/|data:image\/)/.test(src)) {
@@ -314,10 +230,9 @@
     return true;
   }
 
-  // What each form cannot be drawn without. A payload missing one is shown as an
-  // "incomplete" card that names what is missing and keeps every word it carried, instead
-  // of an empty box (2026-11-16: a draft sent without `body` drew a blank sheet).
-  function has(x) { return Array.isArray(x) ? x.length > 0 : !!(x && String(x).trim()); }
+  // What each form cannot be drawn without. A payload missing one is mended into another
+  // form, or drawn as a plain card carrying every word (0.14.0: never a warning box).
+  function has(x) { return isArr(x) ? x.length > 0 : !!(x && String(x).trim()); }
   function paneOk(d) { return d && (has(d.text) || (d.image && has(d.image.src))); }
   var NEEDS = {
     line: function (p) { return has(p.text) ? [] : ["`text`: the one line to show"]; },
@@ -349,284 +264,294 @@
         var t = x.trim(); if (t && !seen[t]) { seen[t] = 1; out.push(t); } return;
       }
       if (typeof x === "number") return;
-      if (Array.isArray(x)) { x.forEach(function (v) { walk(v, key); }); return; }
+      if (isArr(x)) { x.forEach(function (v) { walk(v, key); }); return; }
       if (typeof x === "object") for (var k in x) if (k !== "question") walk(x[k], k);
     })(p, "");
     if (orig && !seen[orig]) out.unshift(orig);
     return out;
   }
-  // 0.14.0 (2026-11-19): the user never sees a warning box. The red "missing a part" box
-  // was for the session, but only the user ever sees a card, and it kept reaching him
-  // (blank sheet, raw JSON, made-up names, dropped question, one-sided before/after). The
-  // last resort is now a plain answer card: the fallback line as the heading, every other
-  // word in order under it, and the question panel. `why` stays only as the page marker.
+  // The last resort: the fallback line as the headline, every other word in order under it,
+  // and the question panel. `why` stays only as the page marker.
   function incomplete(p, card, why, orig) {
     var got = carried(p, orig);
     if (!got.length) got = ["This reply had no words to show."];
-    card.appendChild(el("div", "bb-h", got[0]));
-    got.slice(1).forEach(function (t) { card.appendChild(el("p", "bb-pt", t)); });
+    card.appendChild(el("div", "bb-h1", got[0]));
+    got.slice(1).forEach(function (t) { card.appendChild(el("p", "bb-txt", t)); });
     if (p.question && has(p.question.q)) { try { question(p.question, card); } catch (e) {} }
   }
 
-  function question(q, into) {
+  // The question panel, always last. Lettered choices; the suggested one is tinted when the
+  // payload names it with `pick` (a letter or a number from 0). Three aids sit under the
+  // choices - More, Why and Risks - each opening its text on a click and closing on a second.
+  // They show text only and never send a message, so they are not answer buttons.
+  var AIDS = [["more", "More on this", "More about this question"], ["pros", "Why", "Reasons to do it"], ["risks", "Risks", "Risks"]];
+  function pickIndex(q, n) {
+    var k = q.pick;
+    if (typeof k === "number" && k >= 0 && k < n) return k;
+    if (typeof k === "string" && /^[A-Za-z]$/.test(k)) { var i = k.toUpperCase().charCodeAt(0) - 65; if (i >= 0 && i < n) return i; }
+    return -1;
+  }
+  function question(q, into, compact) {
     if (!q) return;
-    var box = el("div", "bb-q bb-fade"), head = el("div", "qh"), aids = el("div", "bb-aids"), tips = [], pinned = -1;
-    head.appendChild(el("div", "qq", q.q)); head.appendChild(aids); box.appendChild(head);
+    var list = (isArr(q.choices) ? q.choices : []).map(textOf);
+    if (!list.length && /^(should|shall|do|does|did|is|are|can|could|will|would|has|have|want)\b/i.test(q.q || "")) list = ["Yes", "No"];
+    if (!list.length || !/^(something else|none of these)/i.test(list[list.length - 1])) list.push("Something else. I'll tell you.");
+    var pk = pickIndex(q, list.length - 1);
+    var chips = compact && list.every(function (c, i) { return c.length <= 24 || i === list.length - 1; });
+    var box = el("div", "bb-q bb-fade" + (chips ? " chips" : "")), cs = el("div", "bb-cs"), tips = [], aids = el("div", "bb-aids"), pinned = -1;
+    box.appendChild(el("div", "qq", q.q));
+    list.forEach(function (c, i) {
+      var other = i === list.length - 1 && /^(something else|none of these)/i.test(c);
+      var row = el("div", "bb-c c" + (i === pk ? " pick" : "") + (other ? " other" : ""));
+      row.appendChild(el("span", "bb-key", String.fromCharCode(65 + i)));
+      var id = /^([A-Z][A-Z0-9]*-[A-Z]-\d+):\s+(.+)$/.exec(c), tx = el("span", "tx");
+      tx.appendChild(document.createTextNode(id && !chips ? id[2] : c));
+      if (i === pk) tx.appendChild(el("span", "tag", chips ? "· Suggested" : "Suggested"));
+      row.appendChild(fit(tx, "choice", id && !chips ? id[2] : c));
+      if (id && !chips) row.appendChild(el("span", "bb-mt", id[1]));
+      cs.appendChild(row);
+    });
+    box.appendChild(cs);
     function show(i) { tips.forEach(function (t, j) { t.className = "bb-tip" + (j === i ? " on" : ""); aids.children[j].className = "bb-aid" + (j === i ? " on" : ""); aids.children[j].setAttribute("aria-expanded", j === i ? "true" : "false"); }); }
+    var tipHold = el("div");
     AIDS.forEach(function (a, i) {
-      var b = el("span", "bb-aid"), v = q[a[1]], tip = el("div", "bb-tip");
-      b.innerHTML = a[0]; b.tabIndex = 0; b.setAttribute("role", "button"); b.setAttribute("aria-label", a[2]); b.setAttribute("aria-expanded", "false");
+      var b = el("span", "bb-aid", a[1]), v = q[a[0]], tip = el("div", "bb-tip");
+      b.tabIndex = 0; b.setAttribute("role", "button"); b.setAttribute("aria-label", a[2]); b.setAttribute("aria-expanded", "false");
       tip.appendChild(el("b", null, a[2]));
-      (Object.prototype.toString.call(v) === "[object Array]" ? v : [v || "Not given in this reply."]).forEach(function (line) { tip.appendChild(el("div", null, line)); });
+      (isArr(v) ? v : [v || "Not given in this reply."]).forEach(function (line) { tip.appendChild(el("div", null, textOf(line))); });
       function flip() { pinned = pinned === i ? -1 : i; show(pinned); }
       b.addEventListener("click", flip);
       b.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); flip(); } });
-      aids.appendChild(b); tips.push(tip); box.appendChild(tip);
+      aids.appendChild(b); tips.push(tip); tipHold.appendChild(tip);
     });
-    var list = (q.choices || []).slice();
-    if (!list.length && /^(should|shall|do|does|did|is|are|can|could|will|would|has|have|want)\b/i.test(q.q || "")) list = ["Yes", "No"];
-    if (!list.length || !/^(something else|none of these)/i.test(list[list.length - 1])) list.push("Something else. I'll tell you.");
-    list.forEach(function (c, i) {
-      var row = el("div", "c"); row.appendChild(el("b", null, String.fromCharCode(65 + i))); row.appendChild(el("span", null, c)); box.appendChild(row);
-    });
+    box.appendChild(aids); box.appendChild(tipHold);
     into.appendChild(box);
-  }
-  function hero(p, card, report) {
-    if (LOOK) return lookHead(p, card);
-    // The hero art is a short muted clip of a cartoon dragon painted on a brick wall. With
-    // motion turned off, or if the clip cannot load, the same wall shows as a still picture.
-    var hero = el("div", "bb-hero"), art = el(still() ? "img" : "video", "bb-art"), alt = "A cartoon dragon in a red bucket hat, painted on a brick wall, nodding to a beat";
-    if (still()) { art.src = BASE + "dragon-poster.jpg"; art.alt = alt; report("dragon, still"); }
-    else {
-      art.muted = true; art.loop = true; art.autoplay = true; art.playsInline = true;
-      art.setAttribute("muted", ""); art.setAttribute("playsinline", ""); art.setAttribute("aria-label", alt);
-      art.poster = BASE + "dragon-poster.jpg"; art.src = BASE + "dragon-loop.mp4";
-      art.addEventListener("playing", function () { report("dragon, moving"); });
-      art.addEventListener("error", function () { report("dragon, no clip"); });
-    }
-    hero.appendChild(art); hero.appendChild(el("div", "bb-shade"));
-    var over = el("div", "bb-over"), top = el("div");
-    if (p.eyebrow) top.appendChild(el("div", "bb-eyebrow", p.eyebrow));
-    top.appendChild(el("div", "bb-title", p.title));
-    if (p.sub) top.appendChild(el("div", "bb-sub", p.sub));
-    over.appendChild(top);
-    if (p.status) {
-      var b = el("div", "bb-badge"), dot = el("span", "bb-dot live" + (p.status.tone === "warn" ? " warn" : p.status.tone === "bad" ? " bad" : ""));
-      b.appendChild(dot); b.appendChild(el("span", null, p.status.text)); over.appendChild(b);
-    }
-    hero.appendChild(over); card.appendChild(hero);
   }
   function reveal(node) {
     var items = node.querySelectorAll(".bb-fade");
-    Array.prototype.forEach.call(items, function (n, i) { setTimeout(function () { n.classList.add("in"); }, 120 + i * 90); });
+    Array.prototype.forEach.call(items, function (n, i) { setTimeout(function () { n.classList.add("in"); }, 60 + i * 60); });
+  }
+  function itemOf(it) {
+    if (isArr(it)) return { id: it[0], text: it[1], state: it[2] };
+    if (typeof it === "string") { var m = /^([A-Z][A-Z0-9]*-[A-Z]-\d+):\s+(.+)$/.exec(it); return m ? { id: m[1], text: m[2] } : { text: it }; }
+    return it || {};
   }
 
-  /* ---- layouts, one per kind of reply ---------------------------------------- */
+  /* ---- forms, one per kind of reply ------------------------------------------- */
   var LAYOUTS = {
-    mission: function (p, card, report) {
-      hero(p, card, report);
-      var body = el("div", "bb-body");
-      if (p.tiles) body.appendChild(tiles(p.tiles));
-      sections(p.sections, body); details(p.details, body); question(p.question, body);
-      card.appendChild(body);
+    // The session-open brief. The headline says where things stand; the next items ARE the
+    // lettered choices when the question names them, so nothing shows twice.
+    brief: function (p, card) {
+      head(card, { eyebrow: p.headline ? p.title : "Catch up", status: p.status, title: p.headline || p.title, sub: p.sub, stats: p.stats });
+      section("New", p.fresh, "ok", card);
+      section("Last session", p.last, "ok", card);
+      section("Needs a look", p.problems, "warn", card);
+      var q = p.question, ids = q && isArr(q.choices) ? q.choices.map(textOf).join("\n") : "";
+      var rest = (p.next || []).map(itemOf).filter(function (a) { return !(a.id && ids.indexOf(a.id) >= 0); });
+      if (rest.length) {
+        var d = el("div", "bb-sec bb-fade"); d.appendChild(el("div", "bb-lab", "Next up"));
+        rest.forEach(function (a) { d.appendChild(rowLine("go", a.text, [a.id, a.state].filter(has).join(" · "))); });
+        card.appendChild(d);
+      }
+      question(q, card);
+      if (isArr(p.more) && p.more.length) fold(el("b", null, p.moreLabel || p.more.length + " more on the roadmap"), function (b) {
+        p.more.forEach(function (it) { var a = itemOf(it); b.appendChild(rowLine("dot", a.text, a.id)); });
+      }, card);
+      metaFold(p.meta, card);
     },
-    // The session-open brief. What the user steers by comes first: what the last session did,
-    // what is new, the two or three items that are next (the rest fold away), and any problem.
-    // Dates, sizes and health readouts sit in ONE small panel that opens on a click.
-    // A session close: what this session did and what happens next time. Counts are
-    // readouts, so they fold away under the line that says whether the save landed.
-    close: function (p, card, report) {
-      hero(p, card, report);
-      var body = el("div", "bb-body");
-      lines("What we did", p.did, body, "i1");
-      lines("Next time", p.next, body, "i2");
-      lines("Left open", p.open, body, "i3");
-      if (p.meta && p.meta.line) {
-        var box = el("details", "bb-meta bb-fade"), ul = el("ul");
-        box.appendChild(el("summary", null, p.meta.line));
-        (p.meta.items || []).forEach(function (it) { var li = el("li"); li.appendChild(el("b", null, it[0] + ": ")); li.appendChild(document.createTextNode(it[1])); ul.appendChild(li); });
-        box.appendChild(ul);
-        if (LOOK) { var ms = el("div", "bb-sec"); ms.appendChild(beside("i4", box)); body.appendChild(ms); }
-        else body.appendChild(box);
-      }
-      question(p.question, body);
-      card.appendChild(body);
+    close: function (p, card) {
+      head(card, { eyebrow: p.headline ? p.title : "Peace out", status: p.status, title: p.headline || p.title, sub: p.sub, stats: p.stats });
+      section("Done", p.did, "ok", card);
+      section("Next time", p.next, "go", card);
+      section("Left open", p.open, "warn", card);
+      question(p.question, card);
+      metaFold(p.meta, card);
     },
-    brief: function (p, card, report) {
-      hero(p, card, report);
-      var body = el("div", "bb-body");
-      lines("Last time", p.last, body, "i1");
-      lines("New", p.fresh, body);
-      if (p.next && p.next.length) {
-        var d = el("div", "bb-sec bb-fade"), nx = el("div"); nx.appendChild(el("div", "l", "Next up"));
-        p.next.forEach(function (it) { nx.appendChild(row(it)); });
-        if (p.more && p.more.length) {
-          var m = el("details", "bb-det"); m.appendChild(el("summary", null, p.moreLabel || p.more.length + " more open"));
-          p.more.forEach(function (it) { m.appendChild(row(it)); }); nx.appendChild(m);
-        }
-        d.appendChild(beside("i2", nx)); body.appendChild(d);
+    mission: function (p, card) {
+      head(card, { eyebrow: p.eyebrow ? String(p.eyebrow).charAt(0) + String(p.eyebrow).slice(1).toLowerCase() : null, status: p.status, title: p.title, sub: p.sub, stats: p.stats });
+      if (isArr(p.tiles) && p.tiles.length) {
+        var w = el("div", "bb-tiles bb-fade");
+        p.tiles.forEach(function (t) {
+          if (!t || typeof t !== "object") return;
+          var c = el("div", "bb-tile"); c.appendChild(el("div", "k", t.k));
+          c.appendChild(el("div", "v", (typeof t.v === "number" ? t.v.toLocaleString() : String(t.v == null ? "" : t.v)) + (t.unit || "")));
+          if (t.n) c.appendChild(el("div", "t", t.n)); w.appendChild(c);
+        });
+        card.appendChild(w);
       }
-      lines("Problems", p.problems, body, "i3");
-      if (p.meta && p.meta.line) {
-        var box = el("details", "bb-meta bb-fade"), ul = el("ul");
-        box.appendChild(el("summary", null, p.meta.line));
-        (p.meta.items || []).forEach(function (it) { var li = el("li"); li.appendChild(el("b", null, it[0] + ": ")); li.appendChild(document.createTextNode(it[1])); ul.appendChild(li); });
-        box.appendChild(ul);
-        if (LOOK) { var ms = el("div", "bb-sec"); ms.appendChild(beside("i4", box)); body.appendChild(ms); }
-        else body.appendChild(box);
-      }
-      question(p.question, body);
-      card.appendChild(body);
+      (isArr(p.sections) ? p.sections : []).forEach(function (s) {
+        if (!s) return; var d = el("div", "bb-sec bb-fade"); d.appendChild(el("div", "bb-lab", s.label)); d.appendChild(el("p", null, s.text)); card.appendChild(d);
+      });
+      details(p.details, card); question(p.question, card);
     },
     diagnosis: function (p, card) {
-      var body = el("div", "bb-body"); body.style.paddingTop = "16px";
-      var head = el("div"); head.style.cssText = "display:flex;justify-content:space-between;gap:12px;align-items:center";
-      var ti = el("div", null, p.title); ti.style.cssText = "font-size:22px;font-weight:500"; head.appendChild(ti);
-      body.appendChild(beside("i3", head));
-      var flow = el("div", "bb-flow");
-      (p.flow || []).forEach(function (s) {
-        var st = el("div", "bb-step bb-fade" + (s.hot ? " hot" : "")); st.appendChild(el("div", "l", s.label)); st.appendChild(el("div", "t", s.text)); flow.appendChild(st);
+      head(card, { eyebrow: "What went wrong", title: p.title });
+      var flow = el("div", "bb-flow bb-fade");
+      (p.flow || []).forEach(function (s, i) {
+        if (!s) return;
+        var st = el("div", "bb-st" + (s.hot ? " hot" : "")), b = el("div");
+        st.appendChild(el("span", "n", String(i + 1)));
+        b.appendChild(el("div", "l", s.label)); b.appendChild(el("div", null, s.text)); st.appendChild(b); flow.appendChild(st);
       });
-      var sec = el("div", "bb-sec"); sec.appendChild(flow); body.appendChild(sec);
-      sections(p.sections, body); details(p.details, body); question(p.question, body);
-      card.appendChild(body);
+      card.appendChild(flow);
+      details(p.details, card); question(p.question, card);
     },
     line: function (p, card) {
-      card.classList.add("bb-bare");
-      var l = el("div", "bb-line"); l.appendChild(LOOK ? pic(p.tone && p.tone !== "ok" ? "i3" : "i1", "bb-ic sm") : el("span", "bb-orb" + (p.tone && p.tone !== "ok" ? " " + p.tone : ""))); l.appendChild(el("span", null, p.text)); card.appendChild(l);
+      card.classList.add("bb-tiny");
+      card.appendChild(rowLine(p.tone === "warn" ? "warn" : p.tone === "bad" ? "bad" : "ok", p.text));
+    },
+    note: function (p, card) {
+      card.classList.add("bb-tiny");
+      card.appendChild(rowLine("dot", p.text));
     },
     draft: function (p, card) {
-      card.classList.add("bb-bare");
-      var desk = el("div", "bb-desk"), sheet = el("div", "bb-sheet");
-      var head = [p.to ? "To: " + p.to : "", p.subject ? "Subject: " + p.subject : ""].filter(Boolean).join("  ·  ");
-      if (head) sheet.appendChild(el("p", "to", head));
+      head(card, { eyebrow: has(p.to) ? "Draft to " + p.to : "Draft", title: p.subject });
+      var sheet = el("div", "bb-sheet bb-fade");
       String(p.body || "").split(/\n\s*\n/).forEach(function (para) { sheet.appendChild(el("p", null, para)); });
-      desk.appendChild(sheet); card.appendChild(desk);
-      if (p.check) card.appendChild(el("p", "bb-check", "Check before sending: " + p.check));
+      card.appendChild(sheet);
+      if (has(p.check)) { var c = el("div", "bb-sec"); c.appendChild(rowLine("warn", "Check before sending: " + p.check)); card.appendChild(c); }
       question(p.question, card);
     },
     stage: function (p, card) {
-      card.classList.add("bb-bare");
-      if (p.title) card.appendChild(el("div", "bb-cap", p.title));
-      var st = el("div", "bb-stage");
-      if (p.bars && p.bars.length) {
-        var max = Math.max.apply(null, p.bars.map(function (b) { return +b[1] || 0; })) || 1;
+      head(card, { title: p.title });
+      var box = el("div", "bb-box bb-fade");
+      if (isArr(p.bars) && p.bars.length) {
+        var max = Math.max.apply(null, p.bars.map(function (b) { return isArr(b) ? +b[1] || 0 : 0; })) || 1;
         p.bars.forEach(function (b) {
+          if (!isArr(b)) return;
           var r = el("div", "bb-bar"), i = el("i"); i.style.width = Math.max(2, 100 * (+b[1] || 0) / max) + "%";
-          r.appendChild(el("span", null, b[0])); r.appendChild(i); r.appendChild(el("b", null, (+b[1]).toLocaleString())); st.appendChild(r);
+          r.appendChild(el("span", null, b[0])); r.appendChild(i); r.appendChild(el("b", null, (+b[1] || 0).toLocaleString())); box.appendChild(r);
         });
       }
-      if (p.items && p.items.length) { var ul = el("ul"); p.items.forEach(function (t) { ul.appendChild(el("li", null, t)); }); st.appendChild(ul); }
-      if (p.image) picture(p.image, st);
-      if (p.link && /^https:\/\//.test(p.link.url || "")) { var a = el("a", null, p.link.text || "Open full size"); a.href = p.link.url; a.target = "_blank"; a.rel = "noopener"; var w = el("div"); w.style.marginTop = "10px"; w.appendChild(a); st.appendChild(w); }
-      card.appendChild(st);
-      if (p.note) card.appendChild(el("p", "bb-check", p.note));
+      if (isArr(p.items) && p.items.length) p.items.forEach(function (t) { box.appendChild(rowLine("dot", t)); });
+      if (p.image) picture(p.image, box);
+      if (box.childNodes.length) card.appendChild(box);
+      if (p.link && /^https:\/\//.test(p.link.url || "")) { var l = el("div", "bb-links"), a = el("a", "bb-chip", p.link.text || "Open full size"); a.href = p.link.url; a.target = "_blank"; a.rel = "noopener"; l.appendChild(a); card.appendChild(l); }
+      if (has(p.note)) card.appendChild(el("p", "bb-sub", p.note));
       question(p.question, card);
     },
     receipt: function (p, card) {
-      card.classList.add("bb-bare");
-      if (p.result) card.appendChild(beside("i1", el("div", "bb-h", p.result)));
-      if (p.changed && p.changed.length) {
-        var slip = el("div", "bb-slip"); slip.appendChild(el("div", "l", p.label || "What changed"));
-        p.changed.forEach(function (c) { var r = el("div", "bb-done"); r.appendChild(el("span", "bb-tick")); r.appendChild(lead(c)); slip.appendChild(r); });
-        card.appendChild(slip);
-      }
+      head(card, { eyebrow: p.label || "Done", status: p.status, title: p.result, sub: p.sub, stats: p.stats });
+      section(p.label && p.exchange === "told" ? null : "What changed", p.changed, "ok", card);
+      section("Not done", p.notDone, "warn", card);
       details(p.details, card); question(p.question, card);
     },
     answer: function (p, card) {
-      card.classList.add("bb-bare");
-      if (p.answer) card.appendChild(el("div", "bb-h", p.answer));
-      (p.points || []).forEach(function (t) { card.appendChild(point(t)); });
-      if (p.table && p.table.rows && p.table.rows.length) {
-        var tb = el("table", "bb-tbl");
-        if (p.table.head) { var hr = el("tr"); p.table.head.forEach(function (h) { hr.appendChild(el("th", null, h)); }); tb.appendChild(hr); }
-        p.table.rows.forEach(function (row) { var tr = el("tr"); (Array.isArray(row) ? row : row && typeof row === "object" ? Object.keys(row).map(function (k) { return row[k]; }) : [row]).forEach(function (c) { tr.appendChild(el("td", null, c)); }); tb.appendChild(tr); });
+      head(card, { eyebrow: p.label, title: p.answer, stats: p.stats });
+      var pts = isArr(p.points) ? p.points : [];
+      if (pts.length) {
+        var d = el("div", "bb-sec bb-fade");
+        pts.forEach(function (t) {
+          var s = textOf(t), m = isArr(t) ? [null, t[0], t[1]] : /^([^:.!?\n]{2,48}):\s+([\s\S]+)$/.exec(s), r = el("div", "bb-pt");
+          if (m) { r.appendChild(el("b", null, m[1])); r.appendChild(el("span", null, String(m[2]).charAt(0).toUpperCase() + String(m[2]).slice(1))); }
+          else r.textContent = s;
+          d.appendChild(r);
+        });
+        card.appendChild(d);
+      }
+      if (p.table && isArr(p.table.rows) && p.table.rows.length) {
+        var tb = el("table", "bb-tbl bb-fade");
+        if (isArr(p.table.head)) { var hr = el("tr"); p.table.head.forEach(function (h) { hr.appendChild(el("th", null, h)); }); tb.appendChild(hr); }
+        p.table.rows.forEach(function (row) { var tr = el("tr"); (isArr(row) ? row : row && typeof row === "object" ? Object.keys(row).map(function (k) { return row[k]; }) : [row]).forEach(function (c) { tr.appendChild(el("td", null, c)); }); tb.appendChild(tr); });
         card.appendChild(tb);
       }
-      var src = (p.sources || []).filter(function (x) { return /^https:\/\//.test(x.url || ""); });
-      if (src.length) { var ch = el("div", "bb-chips"); src.forEach(function (x) { var a = el("a", "bb-chip", x.text || x.url); a.href = x.url; a.target = "_blank"; a.rel = "noopener"; ch.appendChild(a); }); card.appendChild(ch); }
+      var src = (isArr(p.sources) ? p.sources : []).filter(function (x) { return x && /^https:\/\//.test(x.url || ""); });
+      if (src.length) { var ch = el("div", "bb-links"); src.forEach(function (x) { var a = el("a", "bb-chip", x.text || x.url); a.href = x.url; a.target = "_blank"; a.rel = "noopener"; ch.appendChild(a); }); card.appendChild(ch); }
       details(p.details, card); question(p.question, card);
     },
     diff: function (p, card) {
-      card.classList.add("bb-bare");
-      if (p.title) card.appendChild(el("div", "bb-h", p.title));
-      var ba = el("div", "bb-ba");
-      function pane(cls, d, fallback) {
-        var n = el("div", "bb-pane " + cls); n.appendChild(el("div", "l", (d && d.label) || fallback));
-        var im = d && d.image;
-        if (im) { picture(im, n); n.classList.add("pic"); }
-        var text = String((d && d.text) || ""), mk = cls === "new" && p.changed ? text.indexOf(p.changed) : -1;
+      head(card, { eyebrow: "Changed", title: p.title });
+      var ba = el("div", "bb-ba bb-fade");
+      function pane(cls, d, label) {
+        var n = el("div", "bb-pane " + cls); n.appendChild(el("div", "l", (d && d.label) || label));
+        if (d && d.image) picture(d.image, n);
+        var text = String((d && d.text) || ""), mk = cls === "new" && typeof p.changed === "string" ? text.indexOf(p.changed) : -1;
         if (!text) return n;
-        if (n.classList.contains("pic")) { var cap = el("div", "cap"); n.appendChild(cap); var keep = n; n = cap; var done = function () { return keep; }; }
-        if (mk < 0) n.appendChild(document.createTextNode(text));
-        else { n.appendChild(document.createTextNode(text.slice(0, mk))); n.appendChild(el("mark", null, p.changed)); n.appendChild(document.createTextNode(text.slice(mk + p.changed.length))); }
-        return done ? done() : n;
+        var into = d && d.image ? n.appendChild(el("div", "cap")) : n;
+        if (mk < 0) into.appendChild(document.createTextNode(text));
+        else { into.appendChild(document.createTextNode(text.slice(0, mk))); into.appendChild(el("mark", null, p.changed)); into.appendChild(document.createTextNode(text.slice(mk + p.changed.length))); }
+        return n;
       }
-      ba.appendChild(pane("old", p.before, "BEFORE")); ba.appendChild(pane("new", p.after, "AFTER")); card.appendChild(ba);
-      if (p.note) card.appendChild(el("p", "bb-check", p.note));
+      ba.appendChild(pane("old", p.before, "Before")); ba.appendChild(pane("new", p.after, "After")); card.appendChild(ba);
+      if (has(p.note)) card.appendChild(el("p", "bb-sub", p.note));
       question(p.question, card);
     },
+    // Choose: the options side by side on the same rows. The table already names A, B and C,
+    // so short choices sit in one row of chips under it.
     columns: function (p, card) {
-      card.classList.add("bb-bare");
-      if (p.title) card.appendChild(beside("i2", el("div", "bb-h", p.title)));
-      var cols = el("div", "bb-cols"), rows = p.rows || [];
-      (p.options || []).forEach(function (o) {
-        var c = el("div", "bb-opt" + (o.pick ? " pick" : "")), nm = el("div", "nm", o.name);
-        if (o.pick) nm.appendChild(el("span", "tag", "MY PICK"));
-        c.appendChild(nm);
-        (o.values || []).forEach(function (v, i) { var r = el("div", "r"); if (rows[i]) r.appendChild(el("span", null, rows[i])); r.appendChild(document.createTextNode(v)); c.appendChild(r); });
-        cols.appendChild(c);
-      });
-      card.appendChild(cols);
-      if (p.note) card.appendChild(el("p", "bb-pt", p.note));
-      question(p.question, card);
+      head(card, { eyebrow: "Choose", title: p.title });
+      var opts = (isArr(p.options) ? p.options : []).filter(function (o) { return o && typeof o === "object"; }), rows = isArr(p.rows) ? p.rows : [];
+      var n = Math.max.apply(null, [0].concat(opts.map(function (o) { return isArr(o.values) ? o.values.length : 0; })));
+      var g = el("div", "bb-cmp bb-fade"); g.style.gridTemplateColumns = (rows.length ? "minmax(90px,0.8fr) " : "") + "repeat(" + Math.max(1, opts.length) + ",1fr)";
+      if (rows.length) g.appendChild(el("div", "h"));
+      opts.forEach(function (o, i) { var h = el("div", "h" + (o.pick ? " p" : "")); h.appendChild(el("span", "bb-key", String.fromCharCode(65 + i))); h.appendChild(el("span", null, o.name)); g.appendChild(h); });
+      for (var r = 0; r < n; r++) {
+        if (rows.length) g.appendChild(el("div", "rl", rows[r] || ""));
+        opts.forEach(function (o) { var v = isArr(o.values) ? o.values[r] : ""; g.appendChild(fit(el("div", o.pick ? "p" : null, v == null ? "" : String(v)), "cell", v)); });
+      }
+      card.appendChild(g);
+      if (has(p.note)) card.appendChild(el("p", "bb-sub", p.note));
+      if (p.question) {
+        var q = Object.assign({}, p.question);
+        if (q.pick == null) opts.forEach(function (o, i) { if (o.pick && isArr(q.choices) && textOf(q.choices[i]) === o.name) q.pick = i; });
+        question(q, card, true);
+      }
     },
     prose: function (p, card) {
-      card.classList.add("bb-bare");
-      var w = el("div", "bb-prose"), paras = p.paras || [], at = Math.min(p.keyAfter == null ? 1 : p.keyAfter, paras.length);
-      paras.forEach(function (t, i) { if (i === at && p.key) w.appendChild(el("div", "bb-key", p.key)); w.appendChild(el("p", null, t)); });
-      if (p.key && at >= paras.length) w.appendChild(el("div", "bb-key", p.key));
+      var w = el("div", "bb-prose bb-fade"), paras = isArr(p.paras) ? p.paras : [], at = Math.min(p.keyAfter == null ? 1 : p.keyAfter, paras.length);
+      paras.forEach(function (t, i) { if (i === at && has(p.key)) w.appendChild(el("div", "bb-pull", p.key)); w.appendChild(el("p", null, textOf(t))); });
+      if (has(p.key) && at >= paras.length) w.appendChild(el("div", "bb-pull", p.key));
       card.appendChild(w); question(p.question, card);
     },
     spoken: function (p, card) {
-      card.classList.add("bb-bare");
-      var w = el("div", "bb-say");
-      (p.lines || []).forEach(function (t) { w.appendChild(el("p", null, t)); });
-      if (p.ask) w.appendChild(el("p", "ask", p.ask));
+      var w = el("div", "bb-say bb-fade");
+      (isArr(p.lines) ? p.lines : []).forEach(function (t) { w.appendChild(el("p", null, textOf(t))); });
+      if (has(p.ask)) w.appendChild(el("p", "ask", p.ask));
       card.appendChild(w);
     },
     // The looks on offer, each drawn in its own look, so "show me the themes" shows them.
     themes: function (p, card) {
-      card.classList.add("bb-bare");
-      card.appendChild(el("div", "bb-h", p.title || "Themes you can switch to"));
-      [["default", "Default", "The plain look."], ["graffiti", "Graffiti dragon", "Brick, spray paint and street colour."],
-       ["forest", "Primal forest", "Moss, vines and misty trees."], ["mech", "Mech hangar", "Armor plate and hangar lights."],
-       ["story", "Storybook", "Soft ink lines and watercolour."]].forEach(function (t) {
-        var c = el("div", "bb bb-tsw"), look = t[0] === "default" ? null : t[0], d = { title: t[1], sub: t[2] };
-        if ((p.current || "default") === t[0]) d.status = { text: "In use", tone: "ok" };
-        if (look) { dress(c, look); lookHead(d, c, look); }
-        else { var h = el("div", "bb-lh"), x = el("div"); x.appendChild(el("div", "ti", d.title)); x.appendChild(el("div", "sb", d.sub));
-          if (d.status) { var st = el("div", "st"); st.appendChild(el("span", "bb-dot")); st.appendChild(el("span", null, d.status.text)); x.appendChild(st); }
-          h.appendChild(x); c.appendChild(h); }
-        card.appendChild(c);
+      head(card, { eyebrow: "Looks", title: p.title || "Looks you can switch to" });
+      [["default", "Default", "Plain, with the app's own colours."], ["graffiti", "Graffiti", "Brick and spray paint. The dragon opens and closes."],
+       ["forest", "Forest", "Morning light through old trees."], ["mech", "Mech", "Machined steel and one warm highlight."],
+       ["story", "Story", "A hedgehog with a lantern at golden hour."]].forEach(function (t) {
+        var w = el("div", "bb-tsw"), c = el("div", "bb"), look = t[0] === "default" ? null : t[0];
+        if (look) { c.setAttribute("data-bb-look", look); c.appendChild(corner(look, false)); }
+        var top = el("div", "bb-top"); top.appendChild(el("span", null, t[1]));
+        if ((p.current || "default") === t[0]) top.appendChild(pill({ text: "In use", tone: "ok" }));
+        c.appendChild(top); c.appendChild(el("p", "bb-sub", t[2]));
+        w.appendChild(c); card.appendChild(w);
       });
       question(p.question, card);
-    },
-    note: function (p, card) {
-      var n = el("div", "bb-note"); n.appendChild(el("div", "m")); n.appendChild(el("div", "t", p.text)); card.appendChild(n);
     }
   };
 
-  // The picker: the kind of exchange decides the form. Claude names the exchange; this table does the rest.
-  // "moved" counts how often a user asked for a different shape, so the table can be tuned later.
+  // The look's picture in the header corner: the photo, or the hero on open and close.
+  function corner(look, hero, report) {
+    var h = hero && HEROES[look];
+    if (h) {
+      var still_ = still(), v = el(still_ ? "img" : "video", "bb-corner hero");
+      v.style.objectPosition = h.focus || "50% 30%";
+      if (still_) { v.src = BASE + h.still; v.alt = h.alt; if (report) report("hero, still"); return v; }
+      v.muted = true; v.loop = true; v.autoplay = true; v.playsInline = true;
+      v.setAttribute("muted", ""); v.setAttribute("playsinline", ""); v.setAttribute("aria-label", h.alt);
+      v.poster = BASE + h.still; v.src = BASE + h.clip;
+      if (report) {
+        v.addEventListener("playing", function () { report("hero, moving"); });
+        v.addEventListener("error", function () { report("hero, no clip"); var i = el("img", v.className); i.src = BASE + h.still; i.alt = h.alt; i.style.objectPosition = v.style.objectPosition; if (v.parentNode) v.parentNode.replaceChild(i, v); });
+      }
+      return v;
+    }
+    var i = el("img", "bb-corner"); i.src = BASE + "elements/" + look + "/corner.webp"; i.alt = ""; i.loading = "lazy"; return i;
+  }
+
+  // The picker: the kind of exchange decides the form.
   var PICK = {
     tiny: "line", did: "receipt", found: "answer", changed: "diff", broke: "diagnosis", choose: "columns",
     status: "mission", show: "stage", draft: "draft", think: "prose", voice: "spoken", told: "receipt",
     open: "brief", close: "close", themes: "themes"
   };
-  // 0.13.0 (2026-11-18): an exchange name that is not in PICK no longer draws a warning card.
-  // A LinkedIn close sent "ask" and got the red box with no question panel. A made-up name is
-  // drawn as the first structured form whose needs its fields meet; anything else becomes an
+  // 0.13.0: a made-up exchange is drawn as the first structured form its fields fit, else an
   // answer card carrying every word in order, with the question panel kept.
   var GUESS = ["columns", "diagnosis", "diff", "draft", "stage"];
   function made_up(p) { return p.exchange && !PICK[p.exchange] && !(p.kind && LAYOUTS[p.kind]); }
@@ -637,11 +562,7 @@
     var words = carried(rest, "");
     return { exchange: "found", theme: p.theme, answer: words[0] || "", points: words.slice(1), table: p.table, sources: p.sources, details: p.details, question: p.question };
   }
-  // 0.13.2 (2026-11-19): a real exchange name with a missing part is mended, not flagged.
-  // A Roberta session sent "changed" with only the new tile (no before) and got the red
-  // "missing a part" box. A before/after with one side becomes that one side shown; any
-  // other gap is drawn the way a made-up name is. The warning box is left for a payload
-  // that carries nothing to draw.
+  // 0.13.2: a real exchange with a missing part is mended, not flagged.
   function mend(kind, p) {
     if (kind === "diff") {
       var one = paneOk(p.after) ? p.after : paneOk(p.before) ? p.before : null;
@@ -659,34 +580,11 @@
     var f = PICK[payload.exchange];
     return f && LAYOUTS[f] ? f : "note";
   }
+  // Kept so an older themes.js still loads without an error; the textures are no longer drawn.
+  function addThemes(map) { for (var k in map) THEMES[k] = map[k]; }
 
-  // Themes: optional textures for the surfaces under the content. Loaded once, only when a payload asks.
-  function addThemes(map) { for (var k in map) THEMES[k] = map[k]; var q = WAIT; WAIT = []; q.forEach(function (f) { f(); }); }
-  function applyTheme(name, card) {
-    if (!name) return;
-    function go() {
-      var t = THEMES[name]; if (!t) return;
-      card.setAttribute("data-bb-theme", name);
-      ["desk", "stage", "slip"].forEach(function (k) { if (t[k]) card.style.setProperty("--bb-" + k, "url(" + t[k] + ")"); });
-    }
-    if (THEMES[name]) return go();
-    WAIT.push(go);
-    if (!BASE || document.getElementById("bb-themes")) return;
-    var s = document.createElement("script"); s.id = "bb-themes"; s.src = BASE + "themes.js"; document.head.appendChild(s);
-  }
-
-  // Put a look on a card: its colours, border and type all come from the stylesheet.
-  function dress(card, look) {
-    card.setAttribute("data-bb-look", look);
-  }
-  // 0.12.1 (2026-11-16): nothing a payload carries can leave the card blank. A field in an
-  // unexpected shape (table rows sent as objects) threw halfway through drawing, after the
-  // fallback line had been cleared, and the user saw an empty box. Any error now draws the
-  // incomplete card instead, with the fallback line and every word the payload carried.
-  // 0.12.2 (2026-11-16): a payload that is not valid JSON never reaches the user as raw
-  // JSON in a warning box. The loader hands it over as {exchange: "unreadable", text}; it
-  // is repaired when the slip is a bracket (one closing brace too many, one missing, a
-  // trailing comma), and otherwise drawn as a plain card from the fallback line.
+  // 0.12.2: a payload that is not valid JSON is repaired when the slip is a bracket, and
+  // otherwise drawn as a plain card from the fallback line.
   function balance(t) {
     var out = "", stack = [], inStr = false, esc = false;
     for (var i = 0; i < t.length; i++) {
@@ -705,7 +603,7 @@
     if (typeof t !== "string") return null;
     var s = t.trim(), tries = [s, balance(s), balance(s.replace(/,\s*([}\]])/g, "$1"))];
     for (var i = 0; i < tries.length; i++) {
-      try { var v = JSON.parse(tries[i]); if (v && typeof v === "object" && !Array.isArray(v)) return v; } catch (e) {}
+      try { var v = JSON.parse(tries[i]); if (v && typeof v === "object" && !isArr(v)) return v; } catch (e) {}
     }
     return null;
   }
@@ -724,7 +622,7 @@
     catch (e) {
       try {
         host.textContent = "";
-        var card = el("div", "bb bb-bare");
+        var card = el("div", "bb");
         incomplete(payload, card, ["a shape the renderer can draw (it stopped on: " + String(e && e.message || e) + ")"], orig);
         host.appendChild(card);
         host.setAttribute("data-bb", VERSION + ":error");
@@ -743,34 +641,32 @@
       if (!missing(fk, fixed).length) { payload = fixed; kind = fk; why = []; mended = true; }
     }
     if (why.length) {
-      card.classList.add("bb-bare");
       incomplete(payload, card, why, orig);
       host.appendChild(card);
       host.setAttribute("data-bb", VERSION + ":incomplete");
       return;
     }
-    var state = el("span"); state.className = "sr-only";
     var look = LOOKS.indexOf(payload.theme) >= 0 ? payload.theme : null;
-    if (look) dress(card, look);
+    if (look) card.setAttribute("data-bb-look", look);
     LOOK = look; KIND = kind;
     try {
-      LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); });
-      // 0.14.0: a form that draws nothing is an error, so the plain card takes over.
+      LAYOUTS[kind](payload, card);
       if (!card.textContent.trim() && !card.querySelector("img,video")) throw new Error("the form drew nothing");
-      // 0.13.1 (2026-11-19, BOO-N-152): a question is never dropped. A tiny card with a question
-      // drew the one-line form, which had no question panel, so the choices vanished with no
-      // warning. Any form that did not draw the panel itself gets it here, at the end.
+      // 0.13.1: a question is never dropped. A form that did not draw the panel gets it here.
       if (payload.question && has(payload.question.q) && !card.querySelector(".bb-q")) question(payload.question, card);
     }
     finally { LOOK = null; KIND = null; }
-    // Forms with no header of their own get the scene as a faint corner; one-liners get none.
-    if (look && ["mission", "brief", "close", "themes", "line", "note"].indexOf(kind) < 0) card.insertBefore(pic("scene", "bb-scene", look), card.firstChild);
+    // The look's picture goes in the header corner of every form but the one-liners.
+    if (look && kind !== "line" && kind !== "note") {
+      var hero = HERO_FORMS.indexOf(kind) >= 0 && !!HEROES[look];
+      card.insertBefore(corner(look, hero, function (what) { host.setAttribute("data-bb-art", what); }), card.firstChild);
+      if (hero) card.classList.add("has-hero");
+    }
     host.appendChild(card);
-    if (!look) applyTheme(payload.theme, card);
     if (look) host.setAttribute("data-bb-look", look);
     host.setAttribute("data-bb", VERSION + ":" + kind + (guessed ? ":guessed" : "") + (mended ? ":mended" : ""));
     reveal(card);
   }
 
-  root.BB = { render: render, version: VERSION, kinds: Object.keys(LAYOUTS), pick: PICK, looks: LOOKS, addThemes: addThemes };
+  root.BB = { render: render, version: VERSION, kinds: Object.keys(LAYOUTS), pick: PICK, looks: LOOKS, heroes: HEROES, limits: LIMIT, addThemes: addThemes };
 })(window);
