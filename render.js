@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.13.0";
+  var VERSION = "0.13.1";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
@@ -735,7 +735,13 @@
     var look = LOOKS.indexOf(payload.theme) >= 0 ? payload.theme : null;
     if (look) dress(card, look);
     LOOK = look; KIND = kind;
-    try { LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); }); }
+    try {
+      LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); });
+      // 0.13.1 (2026-11-19, BOO-N-152): a question is never dropped. A tiny card with a question
+      // drew the one-line form, which had no question panel, so the choices vanished with no
+      // warning. Any form that did not draw the panel itself gets it here, at the end.
+      if (payload.question && has(payload.question.q) && !card.querySelector(".bb-q")) question(payload.question, card);
+    }
     finally { LOOK = null; KIND = null; }
     // Forms with no header of their own get the scene as a faint corner; one-liners get none.
     if (look && ["mission", "brief", "close", "themes", "line", "note"].indexOf(kind) < 0) card.insertBefore(pic("scene", "bb-scene", look), card.firstChild);
