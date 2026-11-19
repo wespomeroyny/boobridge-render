@@ -4,7 +4,7 @@
    variables, so light and dark both work. */
 (function (root) {
   "use strict";
-  var VERSION = "0.13.1";
+  var VERSION = "0.14.0";
   var BASE = ((document.currentScript && document.currentScript.src) || "").replace(/[^\/]*$/, "");
   var THEMES = {}, WAIT = [];
   // Looks: full picture themes. Each has four category pictures (i1 done, i2 next, i3 problem,
@@ -111,11 +111,6 @@
     ".bb-sheet .to{font-size:16px;color:#6a675f;border-bottom:1px solid #e3e0d6;padding-bottom:8px}",
     ".bb-check{margin:12px 0 0;font-size:16px;color:var(--text-secondary,#5f5e5a);text-align:center}",
     ".bb-miss{display:flex;align-items:center;justify-content:center;text-align:center;min-height:72px;padding:12px 14px;margin:6px 0;border:1.5px dashed #E24B4A;border-radius:10px;color:#a12524;background:rgba(226,75,74,.06);font-size:16px;line-height:1.45}",
-    ".bb-warn{padding:16px 20px;border-left:4px solid #E24B4A}",
-    ".bb-warn .h{font-size:18px;font-weight:500;margin:0 0 6px}",
-    ".bb-warn ul{margin:0 0 10px;padding-left:20px}.bb-warn li{margin:2px 0}",
-    ".bb-warn .k{font-size:16px;color:var(--text-secondary,#5f5e5a);margin:10px 0 4px}",
-    ".bb-warn .v{white-space:pre-wrap;margin:0 0 8px}",
     ".bb-cap{font-size:19px;font-weight:600;margin:0 0 10px}",
     ".bb-stage{border-radius:16px;padding:16px;position:relative;overflow:hidden;background:linear-gradient(180deg,#1b2430,#0e141c);color:#eef2f6;box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 0 0 1px rgba(255,255,255,.06),0 18px 16px -16px rgba(0,0,0,.5)}",
     ".bb-stage:before{content:'';position:absolute;inset:0;background:radial-gradient(120% 70% at 20% -10%,rgba(140,190,255,.28),transparent 60%),var(--bbg);opacity:.8;mix-blend-mode:soft-light;pointer-events:none}",
@@ -360,15 +355,17 @@
     if (orig && !seen[orig]) out.unshift(orig);
     return out;
   }
+  // 0.14.0 (2026-11-19): the user never sees a warning box. The red "missing a part" box
+  // was for the session, but only the user ever sees a card, and it kept reaching him
+  // (blank sheet, raw JSON, made-up names, dropped question, one-sided before/after). The
+  // last resort is now a plain answer card: the fallback line as the heading, every other
+  // word in order under it, and the question panel. `why` stays only as the page marker.
   function incomplete(p, card, why, orig) {
-    var w = el("div", "bb-warn");
-    w.appendChild(el("p", "h", "This card is missing a part, so it shows everything it carried instead"));
-    var ul = el("ul"); why.forEach(function (t) { ul.appendChild(el("li", null, "Missing " + t.replace(/`/g, ""))); }); w.appendChild(ul);
     var got = carried(p, orig);
-    if (got.length) { w.appendChild(el("p", "k", "What the reply carried:")); got.forEach(function (t) { w.appendChild(el("p", "v", t)); }); }
-    else w.appendChild(el("p", "k", "The reply carried no text at all."));
-    card.appendChild(w);
-    if (p.question && has(p.question.q)) question(p.question, card);
+    if (!got.length) got = ["This reply had no words to show."];
+    card.appendChild(el("div", "bb-h", got[0]));
+    got.slice(1).forEach(function (t) { card.appendChild(el("p", "bb-pt", t)); });
+    if (p.question && has(p.question.q)) { try { question(p.question, card); } catch (e) {} }
   }
 
   function question(q, into) {
@@ -640,6 +637,23 @@
     var words = carried(rest, "");
     return { exchange: "found", theme: p.theme, answer: words[0] || "", points: words.slice(1), table: p.table, sources: p.sources, details: p.details, question: p.question };
   }
+  // 0.13.2 (2026-11-19): a real exchange name with a missing part is mended, not flagged.
+  // A Roberta session sent "changed" with only the new tile (no before) and got the red
+  // "missing a part" box. A before/after with one side becomes that one side shown; any
+  // other gap is drawn the way a made-up name is. The warning box is left for a payload
+  // that carries nothing to draw.
+  function mend(kind, p) {
+    if (kind === "diff") {
+      var one = paneOk(p.after) ? p.after : paneOk(p.before) ? p.before : null;
+      if (one) {
+        var words = [one.text, typeof p.changed === "string" && String(one.text || "").indexOf(p.changed) < 0 ? p.changed : "", p.note].filter(has).join(" ");
+        if (one.image && has(one.image.src)) return { kind: "stage", exchange: "show", theme: p.theme, title: p.title, image: one.image, note: words, question: p.question };
+        return { exchange: "found", theme: p.theme, answer: p.title || words, points: p.title ? [words] : [], details: p.details, question: p.question };
+      }
+    }
+    var rest = {}; for (var k in p) if (k !== "kind" && k !== "exchange") rest[k] = p[k];
+    return guess(rest);
+  }
   function pickForm(payload) {
     if (payload.kind && LAYOUTS[payload.kind]) return payload.kind;
     var f = PICK[payload.exchange];
@@ -723,7 +737,11 @@
     var guessed = made_up(payload);
     if (guessed) payload = guess(payload);
     var kind = pickForm(payload);
-    var why = missing(kind, payload);
+    var why = missing(kind, payload), mended = false;
+    if (why.length) {
+      var fixed = mend(kind, payload), fk = pickForm(fixed);
+      if (!missing(fk, fixed).length) { payload = fixed; kind = fk; why = []; mended = true; }
+    }
     if (why.length) {
       card.classList.add("bb-bare");
       incomplete(payload, card, why, orig);
@@ -737,6 +755,8 @@
     LOOK = look; KIND = kind;
     try {
       LAYOUTS[kind](payload, card, function (what) { host.setAttribute("data-bb-art", what); });
+      // 0.14.0: a form that draws nothing is an error, so the plain card takes over.
+      if (!card.textContent.trim() && !card.querySelector("img,video")) throw new Error("the form drew nothing");
       // 0.13.1 (2026-11-19, BOO-N-152): a question is never dropped. A tiny card with a question
       // drew the one-line form, which had no question panel, so the choices vanished with no
       // warning. Any form that did not draw the panel itself gets it here, at the end.
@@ -748,7 +768,7 @@
     host.appendChild(card);
     if (!look) applyTheme(payload.theme, card);
     if (look) host.setAttribute("data-bb-look", look);
-    host.setAttribute("data-bb", VERSION + ":" + kind + (guessed ? ":guessed" : ""));
+    host.setAttribute("data-bb", VERSION + ":" + kind + (guessed ? ":guessed" : "") + (mended ? ":mended" : ""));
     reveal(card);
   }
 
